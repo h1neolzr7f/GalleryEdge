@@ -17,7 +17,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from galleryedge_ops import alerts as alerts_mod
-from galleryedge_ops import cleanup, events, health, packs
+from galleryedge_ops import auth, backup, cleanup, events, health, packs, releases, selfcheck
+from galleryedge_ops import config as config_mod
 from galleryedge_ops.masking import redact_obj
 
 WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
@@ -40,7 +41,11 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
-def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
+COOKIE = "ge_session"
+PUBLIC = {"/api/auth/state", "/api/auth/login", "/api/auth/register"}
+
+
+def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> FastAPI:
     app = FastAPI(title="GalleryEdge panel", docs_url=None, redoc_url=None, openapi_url=None)
     panel = cfg["panel"]
     allow_remote = bool(panel.get("allow_remote"))
@@ -57,6 +62,15 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
                 return JSONResponse({"error": "panel is localhost-only"}, status_code=403)
         if request.method not in ("GET", "HEAD") and request.headers.get("x-ge-panel") != "1":
             return JSONResponse({"error": "missing X-GE-Panel header"}, status_code=403)
+        path = request.url.path
+        request.state.user = None
+        if path.startswith("/api/") and path not in PUBLIC:
+            user = auth.session_user(conn, request.cookies.get(COOKIE))
+            if not user:
+                return JSONResponse({"error": "login required"}, status_code=401)
+            if request.method not in ("GET", "HEAD") and user["role"] != "admin" and path not in ("/api/auth/logout", "/api/auth/password"):
+                return JSONResponse({"error": "admin role required"}, status_code=403)
+            request.state.user = user
         resp = await call_next(request)
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -168,6 +182,183 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
         events.audit(conn, "panel", "cleanup.done", {"deleted": len(done.delete), "bytes": done.bytes})
         events.emit(conn, "agent", "info", "cleanup.done", f"cleanup deleted {len(done.delete)} files ({done.bytes} bytes)")
         return {"deleted": len(done.delete), "bytes": done.bytes}
+
+    # ---------- auth ----------
+    def who(request: Request) -> str:
+        return request.state.user["username"] if request.state.user else "anonymous"
+
+    def auth_call(fn):
+        try:
+            return fn()
+        except auth.AuthError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/auth/state")
+    def auth_state(request: Request):
+        u = auth.session_user(conn, request.cookies.get(COOKIE))
+        return {"needs_setup": auth.user_count(conn) == 0, "user": u}
+
+    @app.post("/api/auth/login")
+    def do_login(request: Request, body: dict = Body(...)):
+        try:
+            token = auth.login(conn, str(body.get("username", "")), str(body.get("password", "")))
+        except auth.AuthError as e:
+            raise HTTPException(401, str(e))
+        resp = JSONResponse({"ok": True, "user": auth.session_user(conn, token)})
+        resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=request.url.scheme == "https",
+                        max_age=int(auth.SESSION_TTL.total_seconds()), path="/")
+        return resp
+
+    @app.post("/api/auth/register")
+    def do_register(body: dict = Body(...)):
+        auth_call(lambda: auth.register(conn, str(body.get("code", "")), str(body.get("username", "")), str(body.get("password", ""))))
+        return {"ok": True}
+
+    @app.post("/api/auth/logout")
+    def do_logout(request: Request):
+        auth.logout(conn, request.cookies.get(COOKIE))
+        resp = JSONResponse({"ok": True}); resp.delete_cookie(COOKIE, path="/")
+        return resp
+
+    @app.post("/api/auth/password")
+    def do_password(request: Request, body: dict = Body(...)):
+        auth_call(lambda: auth.change_password(conn, who(request), str(body.get("old", "")), str(body.get("new", ""))))
+        return {"ok": True}
+
+    @app.get("/api/users")
+    def users():
+        return {"users": auth.list_users(conn), "invites": auth.list_invites(conn)}
+
+    @app.post("/api/invites")
+    def new_invite(request: Request, body: dict = Body(default={})):
+        code = auth_call(lambda: auth.create_invite(conn, who(request), body.get("role", "viewer"), int(body.get("ttl_days", 7)), str(body.get("note", ""))[:100]))
+        return {"code": code, "note": "shown once"}
+
+    @app.post("/api/users/{username}/{status}")
+    def user_status(request: Request, username: str, status: str):
+        auth_call(lambda: auth.set_status(conn, who(request), username, status))
+        return {"ok": True}
+
+    # ---------- config center ----------
+    cfg_path = cfg.get("_path")
+
+    def raw_config() -> dict:
+        import json as _j
+        if cfg_path and Path(cfg_path).exists():
+            return _j.loads(Path(cfg_path).read_text("utf-8"))
+        return {k: v for k, v in cfg.items() if not k.startswith("_")}
+
+    @app.get("/api/config")
+    def get_config():
+        raw = raw_config()
+        refs = []
+        for path, val in config_mod._walk(raw):
+            if isinstance(val, str) and val.startswith("vault:"):
+                e = vault.doc["entries"].get(val[6:]) if vault else None
+                refs.append({"path": path, "ref": val, "exists": bool(e), "mask": e["mask"] if e else None,
+                             "expires_at": e["expires_at"] if e else None})
+        endpoints = [{"path": path, "value": val} for path, val in config_mod._walk(raw)
+                     if isinstance(val, str) and (val.startswith(("http://", "https://", "libsql://", "file:")) or path.endswith((".path", ".url", ".primary", ".bucket")))]
+        return {"config": raw, "refs": refs, "endpoints": endpoints, "vault_unlocked": vault is not None,
+                "credentials": vault.list() if vault else [], "path": cfg_path}
+
+    @app.post("/api/vault/{name}")
+    def set_secret(request: Request, name: str, body: dict = Body(...)):
+        if vault is None:
+            raise HTTPException(409, "vault locked: start the panel with GE_VAULT_PASSPHRASE")
+        import re as _re
+        if not _re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name):
+            raise HTTPException(400, "bad credential name")
+        val = body.get("value")
+        if not isinstance(val, str) or not val:
+            raise HTTPException(400, "value required")
+        exp = body.get("expires_days")
+        try:
+            if name in vault.doc["entries"]:
+                vault.rotate(name, val, expires_days=exp); action = "vault.rotate"
+            else:
+                vault.set(name, val, expires_days=exp); action = "vault.set"
+        except Exception as e:
+            raise HTTPException(400, str(e))
+        events.audit(conn, who(request), action, {"name": name, "expires_days": exp})
+        return {"ok": True, "name": name, "mask": vault.doc["entries"][name]["mask"], "version": vault.doc["entries"][name]["version"]}
+
+    @app.put("/api/config")
+    def put_config(request: Request, body: dict = Body(...)):
+        new = body.get("config")
+        if not isinstance(new, dict):
+            raise HTTPException(400, "config object required")
+        try:
+            config_mod.validate(new)
+        except config_mod.ConfigError as e:
+            raise HTTPException(422, {"problems": e.problems})
+        if not cfg_path:
+            raise HTTPException(409, "panel started without a config file")
+        import json as _j, os as _os
+        from datetime import datetime as _dt, timezone as _tz
+        hist = Path(cfg["panel"]["state_dir"]) / "config-history"
+        hist.mkdir(parents=True, exist_ok=True)
+        stamp = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%SZ")
+        if Path(cfg_path).exists():
+            (hist / f"config-{stamp}.json").write_text(Path(cfg_path).read_text("utf-8"))
+        tmp = Path(cfg_path).with_suffix(".tmp")
+        tmp.write_text(_j.dumps(new, indent=2, ensure_ascii=False))
+        _os.replace(tmp, cfg_path)
+        events.audit(conn, who(request), "config.update", {"previous": f"config-{stamp}.json"})
+        return {"ok": True, "restart_required": True, "previous": f"config-{stamp}.json"}
+
+    # ---------- releases (local/simulated target) ----------
+    rel_store = releases.ReleaseStore(Path(cfg["panel"]["state_dir"]) / "deploy")
+
+    def backup_fn(tag):
+        dbp = cfg["database"]["primary"]
+        dbp = dbp[5:] if dbp.startswith("file:") else (None if "://" in dbp or dbp == ":memory:" else dbp)
+        out = Path(cfg["panel"]["state_dir"]) / "backups" / f"pre-switch-{tag}-{len(rel_store.history())}.tar.gz"
+        try:
+            backup.create(out, config_path=cfg_path, db_path=dbp, vault_path=cfg.get("vault", {}).get("path"))
+            events.audit(conn, "release", "backup.create", {"archive": out.name})
+            return out
+        except backup.BackupError:
+            return None
+
+    app.state.release_store = rel_store
+    app.state.backup_fn = backup_fn
+
+    @app.get("/api/releases")
+    def get_releases():
+        return {"current": rel_store.current(), "releases": rel_store.list()[::-1], "history": rel_store.history()[::-1][:50]}
+
+    @app.post("/api/releases/rollback")
+    def do_rollback(request: Request, body: dict = Body(...)):
+        if body.get("confirm") is not True:
+            raise HTTPException(400, "explicit confirm required")
+        try:
+            ev = rel_store.rollback(to=body.get("to"), actor=who(request), backup_fn=backup_fn)
+        except releases.ReleaseError as e:
+            raise HTTPException(409, str(e))
+        events.audit(conn, who(request), "release.rollback", ev)
+        events.emit(conn, "agent", "warn", "release.rollback", f"rolled back {ev['from']} -> {ev['to']}" + (" (DB restore required)" if ev["db_restore_required"] else ""))
+        return ev
+
+    # ---------- self-check + backup drill ----------
+    @app.get("/api/selfcheck")
+    def get_selfcheck():
+        return selfcheck.run(cfg, conn, vault, index_db=index_db)
+
+    @app.post("/api/backup/drill")
+    def backup_drill(request: Request):
+        import tempfile
+        dbp = cfg["database"]["primary"]
+        dbp = dbp[5:] if dbp.startswith("file:") else (None if "://" in dbp or dbp == ":memory:" else dbp)
+        with tempfile.TemporaryDirectory() as td:
+            arc = Path(td) / "drill.tar.gz"
+            try:
+                man = backup.create(arc, config_path=cfg_path, db_path=dbp, vault_path=cfg.get("vault", {}).get("path"))
+                restored = backup.restore(arc, Path(td) / "restore")
+            except backup.BackupError as e:
+                raise HTTPException(409, str(e))
+        events.audit(conn, who(request), "backup.drill", {"files": restored})
+        return {"ok": True, "files": restored, "manifest": man["files"]}
 
     # ---------- storage tiering + cost ----------
     from galleryedge_storage import LocalBackend, Router, Rule, forecast, migrate, monthly_cost, plan_cold_migration, snapshot

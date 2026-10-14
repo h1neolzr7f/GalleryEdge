@@ -63,6 +63,7 @@ def load(path: str | Path) -> dict:
             return "file:" + str((base / x[5:]).resolve()) if not Path(x[5:]).is_absolute() else x
         return str((base / x).resolve()) if not Path(x).is_absolute() else x
     cfg["_base"] = str(base)
+    cfg["_path"] = str(p.resolve())
     cfg["panel"]["state_dir"] = rel(cfg["panel"].get("state_dir", "./var"))
     if cfg["database"]["primary"].startswith("file:") or not re.match(r"^\w+://", cfg["database"]["primary"]) and cfg["database"]["primary"] != ":memory:":
         cfg["database"]["primary"] = rel(cfg["database"]["primary"])
