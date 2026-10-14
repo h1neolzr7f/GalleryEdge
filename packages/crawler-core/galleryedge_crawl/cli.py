@@ -26,10 +26,13 @@ def main(argv=None) -> int:
     ap.add_argument("--categories", help="wikimedia-commons: comma-separated subset of the built-in SFW allow-list")
     ap.add_argument("--list-categories", action="store_true", help="wikimedia-commons: print the allow-list and exit")
     ap.add_argument("--category-pages", type=int, default=1, help="wikimedia-commons: follow up to N listing pages (200 files each) per category")
+    ap.add_argument("--subcat-depth", type=int, default=0, help="wikimedia-commons: descend N levels into subcategories of allow-listed categories")
+    ap.add_argument("--max-subcats", type=int, default=50, help="wikimedia-commons: max subcategories followed per category page")
     ap.add_argument("--queries", help="openverse: comma-separated search terms (default: built-in neutral list)")
     ap.add_argument("--concurrency", type=int, default=1, help="parallel requests across DIFFERENT hosts (max 1 in flight per host)")
     ap.add_argument("--recrawl", action="store_true", help="incremental: re-fetch seen pages with ETag/Last-Modified, emit only changes")
     ap.add_argument("--since", help="with --recrawl: only pages last seen before this ISO time")
+    ap.add_argument("--seed-file", help="crawl exactly these URLs (one per line), e.g. pages skipped under an older filter")
     ap.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
     ap.add_argument("--progress-every", type=int, default=50, help="print a progress line every N pages (stderr)")
     a = ap.parse_args(argv)
@@ -43,7 +46,7 @@ def main(argv=None) -> int:
             print("\n".join(SFW_CATEGORIES)); return 0
         cats = [c.strip() for c in a.categories.split(",") if c.strip()] if a.categories else list(SFW_CATEGORIES)
         try:
-            adapter = ADAPTERS["wikimedia-commons"](cats, max_category_pages=a.category_pages)
+            adapter = ADAPTERS["wikimedia-commons"](cats, max_category_pages=a.category_pages, subcat_depth=a.subcat_depth, max_subcats=a.max_subcats)
         except ValueError as e:
             ap.error(f"{e} (see --list-categories)")
         fetcher, hosts = None, ["commons.wikimedia.org"]
@@ -72,6 +75,10 @@ def main(argv=None) -> int:
         on_event = lambda level, code, msg, payload: emit(conn, "crawler", level, code, msg, payload)  # noqa: E731
     c = Crawler(adapter, cfg, state_path=a.state, out_dir=a.out, fetcher=fetcher, on_event=on_event,
                 progress=None if a.quiet else (lambda m: print(m, file=sys.stderr, flush=True)), progress_every=a.progress_every)
+    if a.seed_file:
+        n = c.seed(open(a.seed_file, encoding="utf-8").read().split())
+        if not a.quiet:
+            print(f"[{adapter.name}] seeded {n} URLs from {a.seed_file}", file=sys.stderr)
     print(json.dumps(c.run_incremental(a.since) if a.recrawl else c.run(), indent=1))
     return 0
 

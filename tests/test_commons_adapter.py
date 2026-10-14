@@ -253,3 +253,41 @@ def test_category_pagination_ignores_subcategory_pager():
     u = "https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers?filefrom=OLD.JPG"
     nxt = [x.url for x in a.parse(Response(u, 200, {}, html.encode())) if isinstance(x, Link) and "filefrom" in x.url]
     assert nxt == ["https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers?filefrom=NEW.JPG"]
+
+
+@pytest.mark.parametrize("title,cats,ok", [
+    ("Cochlospermum religiosum 01", [], True),           # latin epithet, not "religion"
+    ("Pyrus communis mit geborstenem Stamm", [], True),  # latin epithet, not "communism"
+    ("Army Ants Costa Rica carrying pupae", [], True),   # army ants
+    ("Megachile incerta male 1", ["Hymenoptera of Israel"], True),  # geo-index category
+    ("Japanese maple (Acer palmatum) in autumn", [], True),  # country + nature subject
+    ("Llama in the Andes", [], True),
+    ("Hookah in a Palestinian shop", [], False),          # region, no nature context
+    ("Spaso-Kamenny Monastery 2013", [], False),
+    ("Flowers in front of a temple", ["Temples in FAKE"], False),  # religious building as category topic
+    ("Bombax ceiba flower, Hong Kong", [], False),         # China-related region: conservative
+    ("FAKE lake", ["Lakes of China"], False),
+    ("Flag of somewhere", [], False), ("Soldiers at a parade", [], False), ("Communist party meeting", [], False),
+    ("Lunar new year 中国", [], False), ("Three golden statues of the Buddha at sunset", [], False),
+])
+def test_sensitive_context_rules(title, cats, ok):
+    from galleryedge_adapters.commons import sensitive_reason
+    assert (sensitive_reason(title, "", cats) is None) is ok
+
+
+def test_subcategory_descent_bounded_and_filtered():
+    from galleryedge_adapters.commons import CommonsAdapter
+    from galleryedge_crawl import Link, Response
+    a = CommonsAdapter(["Quality_images_of_flowers"], subcat_depth=1, max_subcats=2)
+    html = ('<div id="mw-subcategories"><a href="/wiki/Category:Quality_images_of_flowers_by_country">x</a>'
+            '<a href="/wiki/Category:Quality_images_of_flowers_in_China">x</a><a href="/wiki/Category:Quality_images_of_Achillea">x</a>'
+            '<a href="/wiki/Category:Quality_images_of_Abutilon">x</a><a href="/wiki/Category:Quality_images_of_Adansonia">x</a></div>'
+            '<div id="mw-category-media"><a href="/wiki/File:A.jpg">a</a></div>')
+    u = "https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers"
+    subs = [x.url for x in a.parse(Response(u, 200, {}, html.encode())) if isinstance(x, Link) and "Category:" in x.url]
+    assert subs == ["https://commons.wikimedia.org/wiki/Category:Quality_images_of_Achillea", "https://commons.wikimedia.org/wiki/Category:Quality_images_of_Abutilon"]
+    # depth 1 reached: a subcategory page does not descend further
+    u2 = subs[0]
+    assert not [x for x in a.parse(Response(u2, 200, {}, html.encode())) if isinstance(x, Link) and "Category:" in x.url]
+    # default: no descent
+    assert not [x for x in CommonsAdapter(["Quality_images_of_flowers"]).parse(Response(u, 200, {}, html.encode())) if "Category:" in getattr(x, "url", "")]

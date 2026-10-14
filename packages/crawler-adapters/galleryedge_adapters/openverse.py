@@ -15,7 +15,7 @@ from urllib.parse import urlencode, urlsplit, parse_qs
 
 from galleryedge_crawl import Link, Record, Response, Skip
 
-from .commons import BLOCK, SENSITIVE, zh_tags_for
+from .commons import BLOCK, sensitive_reason, zh_tags_for
 
 HOST = "api.openverse.org"
 LICENSES = ("cc0", "pdm", "by", "by-sa")
@@ -69,7 +69,7 @@ class OpenverseAdapter:
         hay = " ".join([title, *tags])
         if BLOCK.search(hay):
             return Skip("sfw-blocked")
-        if SENSITIVE.search(hay):
+        if sensitive_reason(title, "", tags):
             return Skip("sensitive-blocked")
         cover, landing = it.get("url"), it.get("foreign_landing_url")
         if not cover or not str(cover).startswith("https://") or not landing:
