@@ -56,7 +56,8 @@ ZH = {"landscape": "风景", "mountain": "山", "lake": "湖", "river": "河流"
       "butterfly": "蝴蝶", "moth": "蛾", "insect": "昆虫", "architecture": "建筑", "autumn": "秋天", "reptile": "爬行动物", "plant": "植物",
       "leaf": "叶子", "star": "星空", "milky way": "银河"}
 
-NEXT_RE = re.compile(r'<a href="(/w/index\.php\?title=Category:[^"]*filefrom=[^"]*)"[^>]*>next page</a>')
+# only the MEDIA pager (#mw-category-media); the subcategory pager also carries filefrom= but never advances it
+NEXT_RE = re.compile(r'<a href="(/w/index\.php\?title=Category:[^"]*filefrom=[^"#]*#mw-category-media)"[^>]*>next page</a>')
 CAT_FILE_RE = re.compile(r'<a href="(/wiki/File:[^"#?]+)"')
 CATLINKS_RE = re.compile(r'id="mw-normal-catlinks".*?</div>', re.S)
 TITLE_RE = re.compile(r'title="Category:([^"]+)"')
