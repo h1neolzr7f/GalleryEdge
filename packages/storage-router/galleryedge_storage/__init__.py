@@ -322,3 +322,43 @@ def monthly_cost(bytes_stored: float, ops_per_month: float, price_gb_month: floa
                  free_gb: float = 0.0) -> float:
     gb = max(0.0, bytes_stored / 1e9 - free_gb)
     return round(gb * price_gb_month + ops_per_month / 1e6 * price_per_million_ops, 4)
+
+
+# ---------------- factory (credentials only from the encrypted vault) ----------------
+
+def make_backend(b: dict, vault=None, *, client_factory=None):
+    """Build a backend from a config entry. S3/R2 credentials come from ``credential_ref``
+    (a vault entry holding JSON {"access_key_id": ..., "secret_access_key": ...})."""
+    t = b["type"]
+    if t == "local":
+        return LocalBackend(b["id"], b["path"], b.get("tier", "hot"))
+    if t in ("s3", "r2"):
+        if not b.get("bucket"):
+            raise StorageError(f"{b['id']}: bucket required")
+        creds = {}
+        if b.get("credential_ref"):
+            if vault is None:
+                raise StorageError(f"{b['id']}: vault locked, cannot read {b['credential_ref']}")
+            creds = json.loads(vault.resolve(b["credential_ref"]))
+        if client_factory is None:
+            try:
+                import boto3  # type: ignore
+                from botocore.config import Config  # type: ignore
+            except ImportError:
+                raise StorageError("install galleryedge[storage] (boto3) for s3/r2 backends") from None
+            client_factory = lambda **kw: boto3.client("s3", config=Config(signature_version="s3v4", retries={"max_attempts": 3}), **kw)  # noqa: E731
+        client = client_factory(endpoint_url=b.get("url"), region_name=b.get("region", "auto"),
+                                aws_access_key_id=creds.get("access_key_id"), aws_secret_access_key=creds.get("secret_access_key"))
+        return S3Backend(b["id"], client, b["bucket"], b.get("tier", "hot"), b.get("prefix", ""))
+    raise StorageError(f"{b['id']}: unsupported backend type {t}")
+
+
+def add_to_monthly_counter(conn, meter: str, delta: float, now=None) -> float:
+    """Accumulate a per-calendar-month counter (e.g. Turso rows written) and snapshot it."""
+    conn.executescript(SCHEMA)
+    now = now or _now()
+    month = now.strftime("%Y-%m")
+    r = conn.execute("SELECT value FROM usage_snapshots WHERE meter=? AND ts LIKE ? ORDER BY ts DESC LIMIT 1", (meter, month + "%")).fetchone()
+    v = (r[0] if r else 0.0) + float(delta)
+    snapshot(conn, {meter: v}, now=now)
+    return v

@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e ".[dev,panel]"
+      - run: pip install -e ".[dev,panel,storage]"
       - name: wait for libsql
         run: for i in $(seq 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
       - run: pytest -q -rs
@@ -32,6 +32,33 @@ jobs:
       - name: worker typecheck + tests (against libsql service, seeded by Python)
         working-directory: packages/edge-worker/worker
         run: npm ci && npm run typecheck && npm test
+  s3-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [minio, moto]
+    env:
+      GE_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      GE_TEST_S3_KEY: FAKEminioadmin
+      GE_TEST_S3_SECRET: FAKEminiosecret123
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,panel,storage]" "moto[server]"
+      - name: start MinIO
+        if: matrix.server == 'minio'
+        run: |
+          docker run -d -p 9000:9000 -e MINIO_ROOT_USER=$GE_TEST_S3_KEY -e MINIO_ROOT_PASSWORD=$GE_TEST_S3_SECRET minio/minio server /data
+          for i in $(seq 60); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+      - name: start moto S3 server
+        if: matrix.server == 'moto'
+        run: |
+          moto_server -p 9000 &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:9000/ >/dev/null && break; sleep 1; done
+      - run: pytest -q -rs tests/test_phase5_gaps.py -k s3_compatible
   panel-web:
     runs-on: ubuntu-latest
     steps:

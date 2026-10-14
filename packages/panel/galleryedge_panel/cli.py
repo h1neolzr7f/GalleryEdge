@@ -29,7 +29,12 @@ def main(argv=None) -> int:
     host, port = cfg["panel"].get("bind", "127.0.0.1"), cfg["panel"].get("port", 8790)
     import uvicorn
     print(f"GalleryEdge panel on http://{host}:{port}  (takeover={'on' if cfg['panel'].get('takeover') else 'off'})")
-    uvicorn.run(create_app(cfg, conn, vault), host=host, port=port, log_level="warning")
+    app = create_app(cfg, conn, vault)
+    stop = app.state.start_sampler()
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+    finally:
+        stop.set()
     return 0
 
 

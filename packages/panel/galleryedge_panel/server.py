@@ -189,8 +189,15 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
             m[f"bytes:{b['id']}"] = used; m[f"objects:{b['id']}"] = n
         return m
 
+    import threading
+    lock = threading.Lock()
+
     @app.post("/api/costs/snapshot")
     def take_snapshot(body: dict = Body(default={})):
+        with lock:
+            return _snapshot(body, "panel")
+
+    def _snapshot(body, actor):
         m = meters_now()
         for k in ("turso.rows_written", "turso.rows_read", "turso.storage_bytes"):  # reported by the ingest runner
             if isinstance(body.get(k), (int, float)):
@@ -203,8 +210,26 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
                 A.fire(f"quota.{item['meter']}", "warn", f"{item['label']} 用量 {item['ratio']:.0%}，接近上限 / near quota")
             if item["days_to_quota"] is not None and item["days_to_quota"] <= tier_cfg.get("forecast_alert_days", 14):
                 A.fire(f"forecast.{item['meter']}", "warn", f"{item['label']} 按当前增速约 {item['days_to_quota']:.0f} 天后触顶 / will hit quota soon")
-        events.audit(conn, "panel", "costs.snapshot", {"meters": list(m)})
+        events.audit(conn, actor, "costs.snapshot", {"meters": list(m)})
         return res
+
+    def sampler_loop(stop: threading.Event, minutes: float):
+        while not stop.wait(minutes * 60):
+            try:
+                with lock:
+                    _snapshot({}, "scheduler")
+            except Exception as e:  # keep sampling; surface the failure
+                events.emit(conn, "agent", "error", "sampler.failed", f"scheduled sampling failed: {type(e).__name__}")
+
+    def start_sampler(minutes: float | None = None) -> threading.Event:
+        stop = threading.Event()
+        mins = tier_cfg.get("sample_minutes", 60) if minutes is None else minutes
+        if mins:
+            threading.Thread(target=sampler_loop, args=(stop, mins), daemon=True, name="ge-sampler").start()
+            events.emit(conn, "agent", "info", "sampler.started", f"usage sampling every {mins} min")
+        return stop
+
+    app.state.start_sampler = start_sampler
 
     @app.get("/api/costs")
     def costs():

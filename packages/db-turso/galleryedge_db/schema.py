@@ -31,8 +31,10 @@ def init(client, dialect) -> None:
     client.execute("INSERT OR REPLACE INTO meta VALUES ('fts_dialect', ?)", [dialect.name])
 
 
-def ingest(client, works: list[dict], batch_size: int = 200) -> int:
-    """Upsert works in transactional batches (one pipeline round-trip per batch)."""
+def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None = None) -> int:
+    """Upsert works in transactional batches (one pipeline round-trip per batch).
+    ``stats`` (optional) accumulates rows_written / rows_read as reported by the server
+    (Turso/libSQL); for local SQLite it falls back to the number of statements."""
     n = 0
     for i in range(0, len(works), batch_size):
         items = []
@@ -49,7 +51,11 @@ def ingest(client, works: list[dict], batch_size: int = 200) -> int:
                            w.get("created_at"), w.get("retrieved_at"), w.get("pack_id"), int(bool(w.get("synthetic"))))))
             for t in w.get("tags", []):
                 items.append(("INSERT OR IGNORE INTO work_tags VALUES (?,?)", (w["id"], t)))
-        client.batch(items)
+        res = client.batch(items)
+        if stats is not None:
+            rw = sum(r.rows_written for r in res)
+            stats["rows_written"] = stats.get("rows_written", 0) + (rw if rw else len(items))
+            stats["rows_read"] = stats.get("rows_read", 0) + sum(r.rows_read for r in res)
         n += len(items) and len(works[i:i + batch_size])
     return n
 
