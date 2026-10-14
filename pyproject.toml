@@ -16,16 +16,19 @@ ge-ops = "galleryedge_ops.cli:main"
 ge-demo-data = "galleryedge_demo.generate:main"
 ge-demo = "galleryedge_edge.demo:main"
 ge-panel = "galleryedge_panel.cli:main"
+ge-crawl = "galleryedge_crawl.cli:main"
+ge-ingest = "galleryedge_ingest:main"
+ge-demo-source = "galleryedge_demosource:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker"]
+where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker"]
+pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source"]
 [tool.setuptools.package-data]
 galleryedge_ops = ["schemas/*.json"]

@@ -1,3 +1,3 @@
 # demo-source
 
-Planned for Phase 2 (synthetic data only).
+Synthetic self-hosted source site for crawler practice: `ge-demo-source --port 8788`.

@@ -57,6 +57,15 @@ ge-panel --config config.json --demo   # http://127.0.0.1:8790 ，--demo 写入�
 ![包任务](docs/screenshots/panel-packs.png)
 ![清理预览](docs/screenshots/panel-cleanup.png)
 
+### 合规采集（Phase 4）：爬取 → 打包 → 入库 → 搜索
+```bash
+ge-demo-source --port 8788 &                       # 仓库自带的合成演示源站（不碰任何真实网站）
+ge-crawl --adapter demo-selfhost --base http://127.0.0.1:8788 --contact you@example.com
+ge-ingest --db file:./var/demo.db var/packs/*.tar  # 校验每个包的 SHA-256 和每条记录后再入库
+ge-demo serve
+```
+框架强制：遵守 robots.txt（含 Crawl-delay；robots 不可达则不抓）、按主机限速、诚实 User-Agent（必须填联系方式）、只抓白名单主机、登录墙/付费墙/跳转登录页一律跳过并记录原因、默认只采元数据（`--fetch-media` 才下载媒体）、每条记录带出处和许可（无许可不收）、按 URL 和 id 去重、断点续爬、包带校验。只提供 `demo-selfhost` 和 `synthetic` 两个演示适配器，不提供任何真实站点适配器。包格式见 [docs/PACK_FORMAT.md](docs/PACK_FORMAT.md)。
+
 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)，架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
