@@ -21,4 +21,4 @@ GE_LIBSQL_TOKEN=$(cat token) ge-ingest --db libsql://<db> --table-prefix ge_ --p
 1. 全量转换 0001–0037：要先拿到 0001–0036 的 `import.sqlite`。预计写入约 3,000 万行，超出 Turso 免费档每月 1,000 万行的写入额度，需要升级或分月导入。
 2. 新建一个专用 Turso 库（需要 Turso 平台登录），做一次全量导入，在 staging 上并行验证一周。
 3. 给现网 Worker 加功能开关，或者把路由切到新 Worker。旧 Worker 保留不删，可以一键切回。
-4. 回滚：路由切回旧 Worker，`nai-gallery-v3` 原样不动。
+4. 回滚：路由切回旧 Worker，现网库原样不动。
