@@ -50,8 +50,9 @@ def split_tags(t) -> list[str]:
     return [x.strip() for x in (s.split("|") if "|" in s else s.split()) if x.strip()]
 
 class App:
-    def __init__(self, db, dialect=None, *, demo_banner: bool = True):
+    def __init__(self, db, dialect=None, *, demo_banner: bool = True, keys_db=None):
         self.db = db
+        self.keys_db = keys_db or db  # API keys + usage counters can live in a separate writable DB
         name = None
         try:
             r = db.execute("SELECT v FROM meta WHERE k='fts_dialect'").rows
@@ -123,7 +124,7 @@ class App:
             return self._resp(start_response, 500, "text/plain", f"internal error ({type(e).__name__})")
 
     def _api(self, environ, start_response, path, qs):
-        status, reason, hdrs = keys.check(self.db, environ.get("HTTP_X_API_KEY"))
+        status, reason, hdrs = keys.check(self.keys_db, environ.get("HTTP_X_API_KEY"))
         if status != 200:
             return self._json(start_response, status, {"error": reason}, hdrs)
         if path == "/api/v1/search":

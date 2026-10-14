@@ -58,3 +58,24 @@ describe("attribution + hotlink", () => {
     expect(html).toContain("via Wikimedia Commons");
   });
 });
+
+describe("separate usage store", () => {
+  it("keyed API checks keys/usage in keysDb, content stays on the read-only db", async () => {
+    const contentCalls: string[] = [], keyCalls: string[] = [];
+    const work = { id: "w1", title: "t", tags_text: "a | b", synthetic: 0 };
+    const content = { execute: async (sql: string) => { contentCalls.push(sql); if (/INSERT|UPDATE|DELETE/.test(sql)) throw new Error("read-only");
+      return { columns: Object.keys(work), rows: [Object.values(work)] }; }, batch: async () => { throw new Error("read-only"); } } as any;
+    const { sha256Hex } = await import("../src/keys");
+    const key = "ge_abcd1234_FAKEsecret";
+    const h = await sha256Hex(key);
+    const keys = { execute: async (sql: string) => { keyCalls.push(sql);
+        if (sql.includes("FROM api_keys")) return { columns: [], rows: [[h, "active", 30, 1000]] };
+        return { columns: [], rows: [] }; },
+      batch: async (items: any[]) => { items.forEach(([s]) => keyCalls.push(s)); return []; } } as any;
+    const site = new Site(content, undefined, true, false, "", undefined, "", keys);
+    const r = await site.handle(new Request("http://e/api/v1/works/w1", { headers: { "X-API-Key": key } }));
+    expect(r.status).toBe(200);
+    expect(keyCalls.some(s => s.startsWith("INSERT INTO usage_daily"))).toBe(true);
+    expect(contentCalls.some(s => /api_keys|usage_/.test(s))).toBe(false);
+  });
+});
