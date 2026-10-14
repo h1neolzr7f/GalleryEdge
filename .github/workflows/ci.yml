@@ -26,6 +26,12 @@ jobs:
       - name: wait for libsql
         run: for i in $(seq 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
       - run: pytest -q -rs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: worker typecheck + tests (against libsql service, seeded by Python)
+        working-directory: packages/edge-worker/worker
+        run: npm ci && npm run typecheck && npm test
   secret-scan:
     runs-on: ubuntu-latest
     steps:
