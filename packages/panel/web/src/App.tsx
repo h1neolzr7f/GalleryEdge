@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, fmtBytes } from "./api";
 
-type Tab = "status" | "packs" | "alerts" | "cleanup" | "events";
-const TABS: [Tab, string][] = [["status", "状态"], ["packs", "包任务"], ["alerts", "告警"], ["cleanup", "清理"], ["events", "事件日志"]];
+type Tab = "status" | "packs" | "storage" | "alerts" | "cleanup" | "events";
+const TABS: [Tab, string][] = [["status", "状态"], ["packs", "包任务"], ["storage", "存储与成本"], ["alerts", "告警"], ["cleanup", "清理"], ["events", "事件日志"]];
 
 function useLoad<T>(path: string, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -137,10 +137,59 @@ export function EventsView() {
   </div>);
 }
 
+const fmtVal = (v: number | null, unit: string) => v === null || v === undefined ? "-" : unit === "bytes" ? fmtBytes(v) : Math.round(v).toLocaleString();
+
+export function StorageView() {
+  const { data, err, reload } = useLoad<any>("/api/costs");
+  const [plan, setPlan] = useState<any>(null);
+  const [ok, setOk] = useState(false);
+  const [msg, setMsg] = useState("");
+  const loadPlan = () => { setOk(false); api("/api/storage/plan").then(setPlan).catch(e => setMsg(e.message)); };
+  useEffect(loadPlan, []);
+  if (err) return <p className="err">{err}</p>;
+  if (!data) return <p>加载中…</p>;
+  const snap = async () => { await api("/api/costs/snapshot", { method: "POST", body: {} }); reload(); };
+  const move = async () => {
+    try { const r = await api("/api/storage/migrate", { method: "POST", body: { token: plan.token, confirm: true } }); setMsg(`已迁移 ${r.moved.length} 个对象到冷存储，失败 ${r.failed.length}`); }
+    catch (e: any) { setMsg(e.message); }
+    loadPlan(); reload();
+  };
+  return (<div>
+    <div className="cards">
+      <div className="kpi"><b>${data.monthly_total_usd.toFixed(2)}</b><span>预估月费（存储）</span></div>
+      <div className={`kpi ${data.meters.some((m: any) => m.ratio >= 0.85) ? "warn" : ""}`}><b>{data.meters.filter((m: any) => m.ratio >= 0.85).length}</b><span>接近上限的计量</span></div>
+      <div className={`kpi ${data.meters.some((m: any) => m.days_to_quota !== null && m.days_to_quota <= 14) ? "warn" : ""}`}><b>{(() => { const d = data.meters.map((m: any) => m.days_to_quota).filter((x: any) => x !== null); return d.length ? Math.round(Math.min(...d)) + " 天" : "—"; })()}</b><span>最快触顶</span></div>
+      <div className="kpi"><b>{plan ? plan.moves.length : "-"}</b><span>可转冷对象</span></div>
+    </div>
+    <h3>用量与配额 <button onClick={snap}>立即采样</button></h3>
+    <table><thead><tr><th>计量</th><th>当前</th><th>上限</th><th>占用</th><th>日增</th><th>预计触顶</th><th>月费</th></tr></thead><tbody>
+      {data.meters.map((m: any) => <tr key={m.meter}>
+        <td>{m.label}</td><td>{fmtVal(m.value, m.unit)}</td><td>{fmtVal(m.quota ?? null, m.unit)}</td>
+        <td>{m.ratio === null ? "-" : <><progress max={1} value={Math.min(1, m.ratio)} className={m.ratio >= m.warn_ratio ? "hot" : ""} /> {(m.ratio * 100).toFixed(0)}%</>}</td>
+        <td>{m.per_day === null ? "-" : m.per_day <= 0 ? "持平/下降" : fmtVal(m.per_day, m.unit) + "/天"}</td>
+        <td>{m.days_to_quota === null ? "-" : m.days_to_quota > 3650 ? "> 10 年" : <span className={m.days_to_quota <= 14 ? "errtxt" : ""}>{Math.round(m.days_to_quota)} 天</span>}</td>
+        <td>{m.monthly_cost_usd === null ? "-" : "$" + m.monthly_cost_usd.toFixed(2)}</td></tr>)}
+    </tbody></table>
+    <h3>热 → 冷迁移 {plan?.cold_backend && <span className="meta">目标：{plan.cold_backend}</span>}</h3>
+    <p className="note">先复制到冷存储，校验大小和 SHA-256 并完整读回比对，通过后才删除热存储副本。账本、未完成上传和 staging 中的对象不会迁移。</p>
+    {msg && <p className="note">{msg}</p>}
+    {plan && <>
+      <table><tbody>
+        {plan.moves.map((m: any) => <tr key={m.key}><td><code>{m.key}</code></td><td>{m.src} → {m.dst}</td><td>{fmtBytes(m.size)}</td></tr>)}
+        {plan.skipped.map((s: any) => <tr key={s.key}><td><code>{s.key}</code></td><td colSpan={2}><Badge v="protected" /> {s.reason}</td></tr>)}
+        {plan.moves.length + plan.skipped.length === 0 && <tr><td>没有到期的热数据</td></tr>}
+      </tbody></table>
+      <div className="confirm">
+        <label><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> 确认迁移这 {plan.moves.length} 个对象</label>
+        <button className="danger" disabled={!ok || plan.moves.length === 0} onClick={move}>执行迁移</button>
+      </div></>}
+  </div>);
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>(() => (location.hash.slice(1) as Tab) || "status");
   useEffect(() => { location.hash = tab; }, [tab]);
-  const View = { status: StatusView, packs: PacksView, alerts: AlertsView, cleanup: CleanupView, events: EventsView }[tab];
+  const View = { status: StatusView, packs: PacksView, storage: StorageView, alerts: AlertsView, cleanup: CleanupView, events: EventsView }[tab];
   return (<div className="app">
     <aside><h1>GalleryEdge<small>运维面板 · 仅本机</small></h1>
       <nav>{TABS.map(([k, label]) => <button key={k} className={k === tab ? "on" : ""} onClick={() => setTab(k)}>{label}</button>)}</nav>

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { CleanupView, PacksView, AlertsView } from "../src/App";
+import { CleanupView, PacksView, AlertsView, StorageView } from "../src/App";
 
 type Call = { url: string; init?: RequestInit };
 let calls: Call[] = [];
@@ -54,4 +54,22 @@ test("alerts ack", async () => {
   render(<AlertsView />);
   fireEvent.click(await screen.findByText("确认"));
   await waitFor(() => expect(calls.some(c => c.url === "/api/alerts/3/ack")).toBe(true));
+});
+
+test("storage page shows forecast and migration needs confirm", async () => {
+  mockFetch({
+    "GET /api/costs": { monthly_total_usd: 1.5, history: [], meters: [{ meter: "turso.rows_written", label: "Turso 行写入（本月）", unit: "rows", value: 9500000, quota: 10000000, ratio: 0.95, per_day: 100000, days_to_quota: 5, monthly_cost_usd: null, warn_ratio: 0.85 }] },
+    "GET /api/storage/plan": { cold_backend: "cold", token: "tk", bytes: 3, moves: [{ key: "p/a.png", src: "hot", dst: "cold", size: 3 }], skipped: [{ key: "p/done.txt", reason: "ledger" }] },
+    "POST /api/storage/migrate": { moved: ["p/a.png"], failed: [] },
+  });
+  render(<StorageView />);
+  await screen.findByText("Turso 行写入（本月）");
+  expect(screen.getByText("5 天", { selector: "span.errtxt" })).toBeTruthy();
+  await screen.findByText("p/a.png");
+  const btn = screen.getByText("执行迁移") as HTMLButtonElement;
+  expect(btn.disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText(/确认迁移/));
+  fireEvent.click(btn);
+  await waitFor(() => expect(calls.some(c => c.url === "/api/storage/migrate")).toBe(true));
+  expect(JSON.parse(String(calls.find(c => c.url === "/api/storage/migrate")!.init!.body))).toEqual({ token: "tk", confirm: true });
 });

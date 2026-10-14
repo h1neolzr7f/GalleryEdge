@@ -1,12 +1,53 @@
 {
   "version": 1,
-  "panel": {"bind": "127.0.0.1", "allow_remote": false, "state_dir": "./var"},
-  "database": {"primary": "file:./var/panel.db"},
+  "panel": {
+    "bind": "127.0.0.1",
+    "allow_remote": false,
+    "state_dir": "./var"
+  },
+  "database": {
+    "primary": "file:./var/panel.db"
+  },
   "backends": [
-    {"id": "local-hot", "type": "local", "path": "./var/storage/hot", "tier": "hot", "quota_bytes": 10737418240},
-    {"id": "local-cold", "type": "local", "path": "./var/storage/cold", "tier": "cold"}
+    {
+      "id": "local-hot",
+      "type": "local",
+      "path": "./var/storage/hot",
+      "tier": "hot",
+      "quota_bytes": 10737418240,
+      "price_gb_month": 0.015,
+      "price_per_million_ops": 0.36,
+      "free_gb": 10
+    },
+    {
+      "id": "local-cold",
+      "type": "local",
+      "path": "./var/storage/cold",
+      "tier": "cold",
+      "price_gb_month": 0.01,
+      "quota_bytes": 107374182400
+    }
   ],
-  "alerts": {"panel": true, "dedupe_minutes": 30, "fail_threshold": 1},
-  "vault": {"path": "./var/credentials.vault", "remind_days": 14},
-  "cleanup": {"roots": ["./var/work"]}
+  "alerts": {
+    "panel": true,
+    "dedupe_minutes": 30,
+    "fail_threshold": 1
+  },
+  "vault": {
+    "path": "./var/credentials.vault",
+    "remind_days": 14
+  },
+  "cleanup": {
+    "roots": [
+      "./var/work"
+    ]
+  },
+  "tiering": {
+    "hot_to_cold_days": 30,
+    "forecast_alert_days": 14
+  },
+  "turso": {
+    "rows_written_quota_month": 10000000,
+    "rows_read_quota_month": 500000000
+  }
 }

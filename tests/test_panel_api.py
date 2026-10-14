@@ -94,3 +94,30 @@ def test_localhost_only(tmp_path):
 def test_allow_remote_opt_in(tmp_path):
     c, _, _ = make(tmp_path, bind="0.0.0.0", allow_remote=True)
     assert TestClient(c.app, client=("203.0.113.9", 5555)).get("/api/status").status_code == 200
+
+
+def test_costs_snapshot_forecast_alerts(tmp_path):
+    c, conn, cfg = make(tmp_path)
+    Path(cfg["backends"][0]["path"], "blob.bin").write_bytes(b"x" * 2000)
+    r = c.post("/api/costs/snapshot", headers=H, json={"turso.rows_written": 9_500_000}).json()
+    m = {x["meter"]: x for x in r["meters"]}
+    assert m["bytes:local-hot"]["value"] == 2000 and m["turso.rows_written"]["ratio"] == pytest.approx(0.95)
+    keys = [a["key"] for a in c.get("/api/alerts").json()]
+    assert "quota.turso.rows_written" in keys
+    assert "monthly_total_usd" in c.get("/api/costs").json()
+
+
+def test_storage_migration_preview_confirm(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from galleryedge_storage import LocalBackend, Router, Rule
+    c, conn, cfg = make(tmp_path)
+    hot = LocalBackend("local-hot", cfg["backends"][0]["path"]); cold = LocalBackend("local-cold", cfg["backends"][1]["path"], "cold")
+    r = Router(conn, [hot, cold], [Rule("local-hot")])
+    old = datetime.now(timezone.utc) - timedelta(days=60)
+    r.put("p/a.png", b"aaa", now=old); r.put("p/prompts.jsonl", b"l", now=old)
+    plan = c.get("/api/storage/plan").json()
+    assert [m["key"] for m in plan["moves"]] == ["p/a.png"] and plan["skipped"] == [{"key": "p/prompts.jsonl", "reason": "ledger"}]
+    assert c.post("/api/storage/migrate", headers=H, json={"token": plan["token"]}).status_code == 400
+    assert c.post("/api/storage/migrate", headers=H, json={"token": "x", "confirm": True}).status_code == 409
+    res = c.post("/api/storage/migrate", headers=H, json={"token": plan["token"], "confirm": True}).json()
+    assert res["moved"] == ["p/a.png"] and cold.get("p/a.png") == b"aaa" and hot.head("p/prompts.jsonl")
