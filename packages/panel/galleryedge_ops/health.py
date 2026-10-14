@@ -72,11 +72,11 @@ def probe_http(b: dict, opener=urllib.request.urlopen) -> ProbeResult:
 
 
 def probe_libsql(b: dict, token: str | None = None) -> ProbeResult:
-    from .db import connect
+    from galleryedge_db.client import connect
     t = time.monotonic()
     try:
         c = connect(b["url"], token)
-        ok = c.execute("SELECT 1").fetchone()[0] == 1
+        ok = c.execute("SELECT 1").rows[0][0] == 1
     except Exception as e:
         return ProbeResult(b["id"], "libsql", False, f"query failed: {type(e).__name__}")
     return ProbeResult(b["id"], "libsql", ok, "ok", int((time.monotonic() - t) * 1000))

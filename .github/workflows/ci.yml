@@ -11,13 +11,21 @@ jobs:
     strategy:
       matrix:
         python: ["3.10", "3.12"]
+    services:
+      libsql:
+        image: ghcr.io/tursodatabase/libsql-server:latest
+        ports: ["8080:8080"]
+    env:
+      GE_TEST_LIBSQL_URL: http://127.0.0.1:8080
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
-      - run: pytest -q
+      - name: wait for libsql
+        run: for i in $(seq 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
+      - run: pytest -q -rs
   secret-scan:
     runs-on: ubuntu-latest
     steps:
