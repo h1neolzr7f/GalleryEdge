@@ -45,7 +45,7 @@ HARD = re.compile(
     r"\bchairman\b|\bdictator|\bcommunis[mt]s?\b|communist party|\bnationalis[mt]s?\b|propaganda|\bparliament|\bcongress\b|"
     r"\belections?\b|\bprotest(s|ers?)?\b|\bdemonstrat(ion|ors?)s?\b(?! of)|\briots?\b|\brevolution(ary)?\b|\bwars?\b|\bbattle(s|field)?\b|"
     r"\bmilitary\b|\barmy\b(?! ants?)|\bnavy\b|\bsoldiers?\b|\bweapons?\b|\bmissiles?\b|\bwarships?\b|aircraft carrier|"
-    r"memorial to|\bmartyrs?\b|genocide|\bregime\b|\bpope\b|dalai lama|\blamas?\b|\bbuddha\b|\bjesus\b|\bchrist\b|\ballah\b|"
+    r"memorial to|\bmartyrs?\b|genocide|\bregime\b|\bpope\b|dalai lama|\bbuddha\b|\bjesus\b|\bchrist\b|\ballah\b|"
     r"\breligio(n|ns|us)\b|\bmosques?\b|"
     r"中国|中华|台湾|台灣|香港|澳门|西藏|新疆|總統|总统|政治|宗教|军事|军队|解放军|战争|战役|抗战", re.I)
 # China-related region names: block in title/description; ignored only inside geo-index categories ("Flora of Hong Kong")
@@ -57,11 +57,11 @@ SOFT_REGION = re.compile(
 # SOFT_TOPIC: borders, parties, religious buildings... — block as a category topic; in title/desc need nature context
 SOFT_TOPIC = re.compile(
     r"\bborders?\b|\bboundar(y|ies)\b|\bterritor(y|ies|ial)\b|\bparty\b|\bparades?\b|\bcathedrals?\b|\bchurch(es)?\b|"
-    r"\btemples?\b|\bshrines?\b|\bmonaster(y|ies)\b|\bpagodas?\b", re.I)
+    r"\btemples?\b|\bshrines?\b|\bmonaster(y|ies)\b|\bpagodas?\b|\blamas?\b(?! (glama|guanicoe|pacos))", re.I)
 NATURE = re.compile(
     r"\b(flowers?|flora|plants?|trees?|leaf|leaves|blossoms?|blooming|bloom|bouquet|garden|pine|maple|moss|ferns?|orchids?|"
     r"birds?|insects?|bees?|wasps?|ants?|butterfl(y|ies)|moths?|beetles?|dragonfl(y|ies)|spiders?|fung(i|us)|mushrooms?|lichens?|"
-    r"cats?|kittens?|dogs?|fish|frogs?|lizards?|snakes?|turtles?|deer|squirrels?|"
+    r"cats?|kittens?|dogs?|fish|frogs?|lizards?|snakes?|turtles?|deer|squirrels?|llamas?|alpacas?|guanacos?|vicu[nñ]as?|animals?|zoo|farm|"
     r"landscape|waterfalls?|lakes?|rivers?|mountains?|clouds?|sunset|sunrise|sky|beach|coast|sea|forest|snow|ice|autumn|spring)\b|"
     r"花|鸟|蝴蝶|昆虫|猫|狗|树|叶|山|湖|海|云", re.I)
 GEO_CAT = re.compile(r"\b(of|in|from)\b", re.I)
