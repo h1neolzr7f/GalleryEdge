@@ -1,6 +1,6 @@
-# Security Policy / 安全策略
+# Security
 
-- 请通过 GitHub Security Advisories 私下报告漏洞，不要开公开 issue。
-- Report vulnerabilities privately via GitHub Security Advisories.
-
-Design rules: secrets live only in the encrypted vault (`ge-ops vault`), logs are masked, the ops panel binds to 127.0.0.1 by default, CI runs gitleaks on every push and PR.
+- Report suspected vulnerabilities privately if possible (GitHub Security Advisory), or open an Issue **without** pasting real secrets.
+- Default panel binds `127.0.0.1` only. Do not expose it to the internet without auth + HTTPS + TOTP.
+- Cloudflare release tooling only allows Worker names matching `galleryedge-*`.
+- Never commit tokens, vault passphrases, or API keys. Use `vault:` refs or 0600 token files outside the repo.
