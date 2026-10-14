@@ -3,7 +3,7 @@ import { Hrana, rowsToDicts, Value } from "./db";
 import { DIALECTS, Dialect, fts5 } from "./dialect";
 import { check, sha256Hex } from "./keys";
 
-export interface Env { TURSO_URL: string; TURSO_TOKEN?: string; DEMO_BANNER?: string }
+export interface Env { TURSO_URL: string; TURSO_TOKEN?: string; DEMO_BANNER?: string; DEBUG_ERRORS?: string }
 
 const PAGE = 24;
 const CSS = `*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:#0f1115;color:#e6e6e6}
@@ -39,13 +39,13 @@ export async function coverSvg(id: string, title: string): Promise<string> {
 }
 
 export class Site {
-  constructor(private db: Hrana, private dialect: Dialect = fts5, private banner = true) {}
+  constructor(private db: Hrana, private dialect: Dialect = fts5, private banner = true, private debug = false) {}
 
   static async create(env: Env, fetcher?: typeof fetch): Promise<Site> {
     const db = new Hrana(env.TURSO_URL, env.TURSO_TOKEN, fetcher);
     let d = fts5;
     try { const r = await db.execute("SELECT v FROM meta WHERE k='fts_dialect'"); d = DIALECTS[String(r.rows[0]?.[0])] ?? fts5; } catch { /* default */ }
-    return new Site(db, d, env.DEMO_BANNER !== "0");
+    return new Site(db, d, env.DEMO_BANNER !== "0", env.DEBUG_ERRORS === "1");
   }
 
   async search(q = "", tag = "", artist = "", page = 1) {
@@ -91,7 +91,7 @@ export class Site {
       }
       return resp(404, "text/plain", "not found");
     } catch (e) {
-      return resp(500, "text/plain", `internal error (${(e as Error).name})`);
+      return resp(500, "text/plain", `internal error (${(e as Error).name})` + (this.debug ? `: ${(e as Error).message}` : ""));
     }
   }
 
