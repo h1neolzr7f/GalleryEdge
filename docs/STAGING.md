@@ -63,3 +63,8 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
 - 内容库 `galleryedge-staging`：Worker 只持有 **只读** token。
 - 用量库 `galleryedge-usage`（同 org，独立 full-access token）：仅含 `api_plans/api_keys/usage_daily/usage_minute`。Worker 通过 `USAGE_URL/USAGE_TOKEN` 写计数。
 - `ge-keys` 管理密钥：新 key 只写入 0600 文件，不打印；`prune` 清理旧计数控制写入量。
+
+## 内容源扩展（polish-2）
+- `openverse` 适配器：仅 CC0/PDM/CC BY/CC BY-SA，过滤 mature/sensitivity 与 SFW+敏感词表，署名含 provider。
+  **注意**：api.openverse.org/robots.txt 对 `*` 禁止 `/v1/images/`，爬虫遵守 robots，因此对线上 API 不会抓取（测试覆盖此行为）；不绕过、不自动注册客户端。
+- Commons 新增中性分类（膜翅目、蜻蜓、软体动物、Quality images 花/鸟/昆虫/真菌），并支持分类分页 `--category-pages N`（把 robots 禁止的 `/w/index.php` 翻页链接改写为 `/wiki/Category:X?filefrom=`）。

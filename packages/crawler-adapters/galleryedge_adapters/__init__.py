@@ -71,5 +71,6 @@ class SyntheticFetcher:
 
 
 from .commons import CommonsAdapter  # noqa: E402
+from .openverse import OpenverseAdapter  # noqa: E402
 
-ADAPTERS = {"demo-selfhost": DemoSelfhostAdapter, "synthetic": SyntheticAdapter, "wikimedia-commons": CommonsAdapter}
+ADAPTERS = {"demo-selfhost": DemoSelfhostAdapter, "synthetic": SyntheticAdapter, "wikimedia-commons": CommonsAdapter, "openverse": OpenverseAdapter}

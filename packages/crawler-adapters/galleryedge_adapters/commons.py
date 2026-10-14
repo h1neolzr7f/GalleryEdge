@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import html as H
 import re
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 from galleryedge_crawl import Link, Record, Response, Skip
 
@@ -30,6 +30,9 @@ SFW_CATEGORIES = (
     "Featured_pictures_of_waterfalls", "Featured_pictures_of_beaches", "Featured_pictures_of_nature", "Featured_pictures_of_plants",
     "Featured_pictures_of_fungi", "Featured_pictures_of_Lepidoptera", "Featured_pictures_of_trees", "Featured_pictures_of_lakes",
     "Featured_pictures_of_sunsets", "Featured_pictures_of_reptiles",
+    # polish-2: more neutral subjects (verified non-empty 2026-10-14)
+    "Featured_pictures_of_Hymenoptera", "Featured_pictures_of_Odonata", "Featured_pictures_of_molluscs",
+    "Quality_images_of_flowers", "Quality_images_of_birds", "Quality_images_of_insects", "Quality_images_of_fungi",
 )
 BLOCK = re.compile(r"nud|naked|erotic|sexual|\bsex\b|porn|genital|breast|nipple|lingerie|underwear|bikini|topless|corpse|dead bod|"
                    r"cadaver|shunga|bijin-?ga|bathing|bather|sweat in art|swimsuit|gore|blood|execution|wound|injur|war crime|massacre|autopsy|surgery|medical|penis|vagina|buttock|"
@@ -53,6 +56,7 @@ ZH = {"landscape": "风景", "mountain": "山", "lake": "湖", "river": "河流"
       "butterfly": "蝴蝶", "moth": "蛾", "insect": "昆虫", "architecture": "建筑", "autumn": "秋天", "reptile": "爬行动物", "plant": "植物",
       "leaf": "叶子", "star": "星空", "milky way": "银河"}
 
+NEXT_RE = re.compile(r'<a href="(/w/index\.php\?title=Category:[^"]*filefrom=[^"]*)"[^>]*>next page</a>')
 CAT_FILE_RE = re.compile(r'<a href="(/wiki/File:[^"#?]+)"')
 CATLINKS_RE = re.compile(r'id="mw-normal-catlinks".*?</div>', re.S)
 TITLE_RE = re.compile(r'title="Category:([^"]+)"')
@@ -122,11 +126,13 @@ def thumb_url(og_image: str, width: int = 500) -> str | None:
 class CommonsAdapter:
     name = "wikimedia-commons"
 
-    def __init__(self, categories=SFW_CATEGORIES):
+    def __init__(self, categories=SFW_CATEGORIES, max_category_pages: int = 1):
         bad = [c for c in categories if c not in SFW_CATEGORIES]
         if bad:
             raise ValueError(f"category not on the SFW allow-list: {bad}")
         self.categories = list(categories)
+        self.max_category_pages = max(1, max_category_pages)
+        self._cat_pages: dict[str, int] = {}
 
     def start_urls(self):
         return [f"https://{HOST}/wiki/Category:{c}" for c in self.categories]
@@ -139,6 +145,16 @@ class CommonsAdapter:
                 yield Skip("empty-category"); return
             for href in files:
                 yield Link(href)
+            # category pagination: MediaWiki links "next page" via /w/index.php (robots-disallowed), so we
+            # rewrite it to the equivalent /wiki/Category:X?filefrom=... URL, bounded per category.
+            cat = unquote(path[len("/wiki/Category:"):])
+            m = NEXT_RE.search(resp.text)
+            seen = self._cat_pages.get(cat, 1)
+            if m and seen < self.max_category_pages:
+                self._cat_pages[cat] = seen + 1
+                ff = parse_qs(urlsplit(H.unescape(m.group(1))).query).get("filefrom", [""])[0]
+                if ff:
+                    yield Link(f"https://{HOST}/wiki/Category:{quote(cat)}?" + urlencode({"filefrom": ff}))
             return
         if path.startswith("/wiki/File:"):
             yield from self._file(resp, path)

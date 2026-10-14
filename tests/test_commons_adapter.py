@@ -225,3 +225,19 @@ def test_cli_categories(capsys):
 def test_clean_author_upload_tool_note():
     from galleryedge_adapters.commons import clean_author
     assert clean_author("FAKE Krapf This file was uploaded with Commonist.") == "FAKE Krapf"
+
+
+def test_category_pagination_rewrites_to_wiki_path():
+    from galleryedge_adapters.commons import CommonsAdapter
+    from galleryedge_crawl import Link, Response
+    a = CommonsAdapter(["Quality_images_of_flowers"], max_category_pages=2)
+    html = ('<a href="/wiki/File:A.jpg">x</a><a href="/w/index.php?title=Category:Quality_images_of_flowers&amp;filefrom=B+c.JPG#mw-category-media" '
+            'title="Category:Quality images of flowers">next page</a>')
+    u = "https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers"
+    links = [x.url for x in a.parse(Response(u, 200, {}, html.encode())) if isinstance(x, Link)]
+    nxt = [l for l in links if "filefrom" in l]
+    assert nxt == ["https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers?filefrom=B+c.JPG"]
+    assert "/w/index.php" not in nxt[0]
+    # bounded: second listing page does not link further
+    links2 = [x.url for x in a.parse(Response(nxt[0], 200, {}, html.encode())) if isinstance(x, Link)]
+    assert not any("filefrom" in l for l in links2)
