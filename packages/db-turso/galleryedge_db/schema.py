@@ -81,3 +81,19 @@ def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None 
 def load_jsonl(path) -> list[dict]:
     with open(path, encoding="utf-8") as f:
         return [json.loads(l) for l in f if l.strip()]
+
+
+def refresh_search_text(client, batch: int = 100) -> int:
+    """Recompute works.search_text (e.g. after enabling jieba); only changed rows are written (FTS follows via trigger)."""
+    from .text import search_text
+    rows = client.execute("SELECT id, title, prompt, tags_text, artist, search_text FROM works").rows
+    todo = []
+    for rid, title, prompt, tags_text, artist, old in rows:
+        tags = [t for t in (tags_text or "").split(" | ") if t] if " | " in (tags_text or "") else None
+        w = {"title": title, "prompt": prompt, "artist": artist, **({"tags": tags} if tags is not None else {"tags_text": tags_text})}
+        new = search_text(w)
+        if new != old:
+            todo.append(("UPDATE works SET search_text=? WHERE id=?", (new, rid)))
+    for i in range(0, len(todo), batch):
+        client.batch(todo[i:i + batch])
+    return len(todo)

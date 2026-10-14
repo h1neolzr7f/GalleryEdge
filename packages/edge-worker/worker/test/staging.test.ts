@@ -6,7 +6,7 @@ import { Hrana } from "../src/db";
 describe("CJK search text (mirrors Python)", () => {
   it("spaces CJK and builds phrase queries", () => {
     expect(cjkSpace("原神胡桃 girl")).toBe("原 神 胡 桃 girl");
-    expect(fts5Query("胡桃 girl")).toBe('"胡 桃" "girl"*');
+    expect(fts5Query("胡桃 girl")).toBe('("胡桃" OR "胡 桃") "girl"*');
     expect(fts5Query('AI绘图 "x')).toBe('"AI 绘 图" "x"*');
   });
 });
@@ -77,5 +77,14 @@ describe("separate usage store", () => {
     expect(r.status).toBe(200);
     expect(keyCalls.some(s => s.startsWith("INSERT INTO usage_daily"))).toBe(true);
     expect(contentCalls.some(s => /api_keys|usage_/.test(s))).toBe(false);
+  });
+});
+
+describe("zh query (word OR char fallback)", () => {
+  it("builds word-or-phrase clauses", async () => {
+    const { fts5Query } = await import("../src/text");
+    expect(fts5Query("蝴蝶")).toBe('("蝴蝶" OR "蝴 蝶")');
+    expect(fts5Query("花")).toBe('"花"');
+    expect(fts5Query("flower 猫")).toBe('"flower"* "猫"');
   });
 });

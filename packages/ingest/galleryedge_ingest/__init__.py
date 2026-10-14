@@ -27,7 +27,8 @@ def main(argv=None) -> int:
     ap.add_argument("--panel-db", help="panel DB (file:...) to receive Turso row metering + ingest events")
     ap.add_argument("--table-prefix", default=os.environ.get("GE_TABLE_PREFIX", ""), help="namespace tables, e.g. ge_ (for a shared DB)")
     ap.add_argument("--token-file", help="read the libSQL auth token from this file (or a JSON file's rw_token/auth_token) instead of $GE_LIBSQL_TOKEN")
-    ap.add_argument("packs", nargs="+")
+    ap.add_argument("--refresh-search-text", action="store_true", help="recompute search_text for existing rows (e.g. after installing jieba) and exit")
+    ap.add_argument("packs", nargs="*")
     a = ap.parse_args(argv)
     token = os.environ.get("GE_LIBSQL_TOKEN")
     if a.token_file:
@@ -39,6 +40,10 @@ def main(argv=None) -> int:
             token = raw
     db = C.connect(a.db, token, prefix=a.table_prefix)
     schema.init(db, dialect.detect(db))
+    if a.refresh_search_text:
+        print(f"search_text refreshed on {schema.refresh_search_text(db)} rows"); return 0
+    if not a.packs:
+        ap.error("no packs given")
     conn = None
     if a.panel_db:
         from galleryedge_ops import db as pdb
