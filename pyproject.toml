@@ -25,10 +25,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source"]
+where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source", "packages/storage-router"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source"]
+pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source", "packages/storage-router"]
 [tool.setuptools.package-data]
 galleryedge_ops = ["schemas/*.json"]

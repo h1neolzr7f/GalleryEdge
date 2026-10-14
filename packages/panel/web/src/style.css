@@ -18,3 +18,4 @@ progress{width:90px}.errtxt{color:#ff9b9b;font-size:12px}.acts{display:flex;gap:
 .al-error{border-left-color:#e05252}.al-warn{border-left-color:#d9a93a}.al button{justify-self:start}.meta{color:#8a93a6;font-size:12px}
 .confirm{display:flex;gap:12px;align-items:center;margin-top:12px}.filters{display:flex;gap:8px;margin-bottom:12px}
 select{background:#161a22;color:#e6e6e6;border:1px solid #303848;border-radius:7px;padding:5px 8px}code{font-size:12px;color:#b9c4dd}
+progress.hot::-webkit-progress-value{background:#e0a53a}progress.hot::-moz-progress-bar{background:#e0a53a}

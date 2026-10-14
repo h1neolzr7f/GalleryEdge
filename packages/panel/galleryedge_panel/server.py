@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -167,6 +168,90 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
         events.audit(conn, "panel", "cleanup.done", {"deleted": len(done.delete), "bytes": done.bytes})
         events.emit(conn, "agent", "info", "cleanup.done", f"cleanup deleted {len(done.delete)} files ({done.bytes} bytes)")
         return {"deleted": len(done.delete), "bytes": done.bytes}
+
+    # ---------- storage tiering + cost ----------
+    from galleryedge_storage import LocalBackend, Router, Rule, forecast, migrate, monthly_cost, plan_cold_migration, snapshot
+
+    local = [b for b in cfg["backends"] if b["type"] == "local" and b.get("path")]
+    cold = next((b for b in local if b.get("tier") == "cold"), None)
+    tier_cfg = cfg.get("tiering", {})
+
+    def router():
+        bes = [LocalBackend(b["id"], b["path"], b.get("tier", "hot")) for b in local]
+        up = {r["id"]: r["status"] != "down" for r in rows("SELECT id,status FROM backend_status")}
+        return Router(conn, bes, [Rule(b["id"]) for b in local], is_up=lambda i: up.get(i, True),
+                      emit=lambda lvl, code, msg: events.emit(conn, "agent", lvl, code, msg))
+
+    def meters_now() -> dict:
+        m = {}
+        for b in local:
+            used, n = LocalBackend(b["id"], b["path"]).usage()
+            m[f"bytes:{b['id']}"] = used; m[f"objects:{b['id']}"] = n
+        return m
+
+    @app.post("/api/costs/snapshot")
+    def take_snapshot(body: dict = Body(default={})):
+        m = meters_now()
+        for k in ("turso.rows_written", "turso.rows_read", "turso.storage_bytes"):  # reported by the ingest runner
+            if isinstance(body.get(k), (int, float)):
+                m[k] = body[k]
+        router()  # ensures tables
+        snapshot(conn, m)
+        res = costs()
+        for item in res["meters"]:
+            if item["ratio"] is not None and item["ratio"] >= item["warn_ratio"]:
+                A.fire(f"quota.{item['meter']}", "warn", f"{item['label']} 用量 {item['ratio']:.0%}，接近上限 / near quota")
+            if item["days_to_quota"] is not None and item["days_to_quota"] <= tier_cfg.get("forecast_alert_days", 14):
+                A.fire(f"forecast.{item['meter']}", "warn", f"{item['label']} 按当前增速约 {item['days_to_quota']:.0f} 天后触顶 / will hit quota soon")
+        events.audit(conn, "panel", "costs.snapshot", {"meters": list(m)})
+        return res
+
+    @app.get("/api/costs")
+    def costs():
+        router()
+        out, total = [], 0.0
+        for b in cfg["backends"]:
+            f = forecast(conn, f"bytes:{b['id']}", b.get("quota_bytes"))
+            cost = monthly_cost(f["value"] or 0, 0, b.get("price_gb_month", 0), b.get("price_per_million_ops", 0), b.get("free_gb", 0))
+            total += cost
+            out.append({**f, "label": f"存储 {b['id']} ({b.get('tier', 'hot')})", "unit": "bytes", "backend": b["id"], "tier": b.get("tier", "hot"),
+                        "monthly_cost_usd": cost, "warn_ratio": b.get("warn_ratio", 0.85)})
+        t = cfg.get("turso", {})
+        for meter, q, label in (("turso.rows_written", t.get("rows_written_quota_month"), "Turso 行写入（本月）"),
+                                ("turso.rows_read", t.get("rows_read_quota_month"), "Turso 行读取（本月）"),
+                                ("turso.storage_bytes", t.get("storage_quota_bytes"), "Turso 存储")):
+            f = forecast(conn, meter, q)
+            if f["value"] is not None or q:
+                out.append({**f, "label": label, "unit": "bytes" if meter.endswith("bytes") else "rows", "monthly_cost_usd": None, "warn_ratio": 0.85})
+        hist = rows("SELECT ts, meter, value FROM usage_snapshots ORDER BY ts DESC LIMIT 400")
+        return {"meters": out, "monthly_total_usd": round(total, 4), "history": hist}
+
+    def mig_plan():
+        if not cold:
+            return [], [], None
+        r = router()
+        moves, skipped = plan_cold_migration(r, cold["id"], older_than_days=tier_cfg.get("hot_to_cold_days", 30))
+        tok = hashlib.sha256(json.dumps([[m.key, m.src, m.size] for m in moves]).encode()).hexdigest()[:32]
+        return moves, skipped, tok
+
+    @app.get("/api/storage/plan")
+    def storage_plan():
+        moves, skipped, tok = mig_plan()
+        return {"cold_backend": cold["id"] if cold else None, "token": tok, "bytes": sum(m.size for m in moves),
+                "moves": [m.__dict__ for m in moves], "skipped": [{"key": k, "reason": w} for k, w in skipped],
+                "objects": rows("SELECT backend_id, tier, count(*) n, sum(size) bytes FROM objects GROUP BY backend_id, tier")}
+
+    @app.post("/api/storage/migrate")
+    def storage_migrate(body: dict = Body(...)):
+        if body.get("confirm") is not True:
+            raise HTTPException(400, "explicit confirm required")
+        moves, _, tok = mig_plan()
+        if not tok or body.get("token") != tok:
+            raise HTTPException(409, "plan changed since preview; preview again")
+        events.audit(conn, "panel", "storage.migrate.start", {"n": len(moves)})
+        res = migrate(router(), moves, dry_run=False)
+        events.audit(conn, "panel", "storage.migrate.done", {"moved": len(res["moved"]), "failed": len(res["failed"])})
+        return res
 
     if WEB_DIST.is_dir():
         app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")

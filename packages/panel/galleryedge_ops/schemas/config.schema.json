@@ -120,6 +120,18 @@
             "type": "number",
             "exclusiveMinimum": 0,
             "default": 5
+          },
+          "price_gb_month": {
+            "type": "number",
+            "minimum": 0
+          },
+          "price_per_million_ops": {
+            "type": "number",
+            "minimum": 0
+          },
+          "free_gb": {
+            "type": "number",
+            "minimum": 0
           }
         }
       }
@@ -181,6 +193,40 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "tiering": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hot_to_cold_days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30
+        },
+        "forecast_alert_days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 14
+        }
+      }
+    },
+    "turso": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rows_written_quota_month": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows_read_quota_month": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storage_quota_bytes": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

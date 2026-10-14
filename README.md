@@ -66,6 +66,13 @@ ge-demo serve
 ```
 框架强制：遵守 robots.txt（含 Crawl-delay；robots 不可达则不抓）、按主机限速、诚实 User-Agent（必须填联系方式）、只抓白名单主机、登录墙/付费墙/跳转登录页一律跳过并记录原因、默认只采元数据（`--fetch-media` 才下载媒体）、每条记录带出处和许可（无许可不收）、按 URL 和 id 去重、断点续爬、包带校验。只提供 `demo-selfhost` 和 `synthetic` 两个演示适配器，不提供任何真实站点适配器。包格式见 [docs/PACK_FORMAT.md](docs/PACK_FORMAT.md)。
 
+### 存储路由 / 热冷分层 / 成本（Phase 5）
+- `galleryedge_storage`：统一后端接口（本地目录、任何 S3 兼容服务如 R2/MinIO——客户端由你自己构造注入、内存后端；网盘类后端按同一接口接入），按前缀/大小/优先级路由，后端挂了自动切到下一个，写入后校验。
+- 热 → 冷迁移：复制 → 校验大小和 SHA-256 → 完整读回比对 → 改索引 → 最后才删热副本；账本、未完成上传、staging 中的对象不迁；默认 dry-run，面板里要勾选确认，预览后计划变化会拒绝执行。
+- 计量与成本：定期采样各后端用量和 Turso 行读写（由入库程序上报），线性外推「N 天后触顶」，接近上限或预计 14 天内触顶会告警；按单价估算月费。面板新页面「存储与成本」。
+
+![存储与成本](docs/screenshots/panel-storage.png)
+
 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)，架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
