@@ -27,7 +27,7 @@ SFW_CATEGORIES = (
     "Featured_pictures_of_birds", "Featured_pictures_of_flowers", "Featured_pictures_of_lighthouses", "Featured_pictures_of_bridges",
 )
 BLOCK = re.compile(r"nud|naked|erotic|sexual|\bsex\b|porn|genital|breast|nipple|lingerie|underwear|bikini|topless|corpse|dead bod|"
-                   r"cadaver|gore|blood|execution|wound|injur|war crime|massacre|autopsy|surgery|medical|penis|vagina|buttock|"
+                   r"cadaver|shunga|bijin-?ga|bathing|bather|sweat in art|swimsuit|gore|blood|execution|wound|injur|war crime|massacre|autopsy|surgery|medical|penis|vagina|buttock|"
                    r"裸|色情|尸|血", re.I)
 LICENSE_OK = re.compile(r"^(cc0( 1\.0)?|public domain|pd(-.*)?|cc by( \d\.\d)?( [a-z]{2,})?|cc by-sa( \d\.\d)?( [a-z]{2,})?)$", re.I)
 # tiny glossary so Chinese queries work on English-language metadata (added as zh tags, marked in rights_note)
@@ -43,7 +43,8 @@ TITLE_RE = re.compile(r'title="Category:([^"]+)"')
 
 
 def _txt(s: str) -> str:
-    return re.sub(r"\s+", " ", H.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
+    s = re.sub(r"<(style|script)\b.*?</\1>", " ", s or "", flags=re.S | re.I)
+    return re.sub(r"\s+", " ", H.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
 
 
 def _span(doc: str, cls: str) -> str:
@@ -57,6 +58,40 @@ def _desc(doc: str, langs) -> str:
         if m:
             return re.sub(r"^[^:：]{1,30}[:：]\s*", "", _txt(m.group(1)))[:600]
     return ""
+
+
+def clean_author(s: str) -> str:
+    """licensetpl_attr often carries the whole licence blurb; keep only the credit line."""
+    s = re.split(r"\s+You are free|\s+This file is licensed", s or "", maxsplit=1)[0]
+    s = re.sub(r"\(via Wikimedia Commons\)", "", s)
+    s = re.split(r"\s*\.mw-parser-output\b", s, maxsplit=1)[0]  # leaked TemplateStyles CSS
+    s = re.sub(r"\s*/\s*(CC[- ]BY[-A-Z ]*[\d.]*|CC0[\d. ]*|Public domain)\s*$", "", s.strip(), flags=re.I)
+    s = re.sub(r"^©\s*", "", s).strip(" ,;/")
+    return (s[:120] or "unknown")
+
+
+def zh_tags_for(text: str) -> list[str]:
+    hay = text.lower()
+    return sorted({v for k, v in ZH.items() if re.search(r"\b" + re.escape(k) + r"(?:e?s)?\b", hay)})
+
+
+def attribution_for(title: str, author: str, lic: str, lic_url: str) -> str:
+    return (f"“{title}” by {author}, {lic}" + (f" ({lic_url})" if lic_url else "") + ", via Wikimedia Commons")[:600]
+
+
+def normalize_record(r: dict) -> dict:
+    """Re-apply the current cleaning rules to an already-collected record (no network)."""
+    r = dict(r)
+    author = clean_author(r.get("author") or r.get("artist") or "")
+    base = [t for t in r.get("tags", []) if not re.search(r"[\u4e00-\u9fff]", t)]
+    r.update(author=author, artist=author, tags=list(dict.fromkeys(base + zh_tags_for(" ".join([r.get("title", ""), r.get("prompt", ""), *base])))),
+             attribution=attribution_for(r["title"], author, r["license"], r.get("license_url", "")))
+    return r
+
+
+def sfw_ok(record: dict) -> bool:
+    """Re-check an already-collected record against the (possibly updated) block-list."""
+    return not BLOCK.search(" ".join([record.get("title", ""), record.get("prompt", ""), *record.get("tags", [])]))
 
 
 def thumb_url(og_image: str, width: int = 500) -> str | None:
@@ -103,15 +138,15 @@ class CommonsAdapter:
         if not cover:
             yield Skip("no-thumbnail"); return
         am = re.search(r'id="fileinfotpl_aut"[^>]*>.*?</td>\s*<td[^>]*>(.*?)</td>', doc, re.S)
-        author = _span(doc, "licensetpl_attr") or (_txt(am.group(1)) if am else "") or "unknown"
+        author = clean_author(_span(doc, "licensetpl_attr") or (_txt(am.group(1)) if am else ""))
         lic_url = _span(doc, "licensetpl_link") or ""
         title = re.sub(r"\.(jpe?g|png|tiff?|webp|gif|svg)$", "", name, flags=re.I)
         hay = " ".join([title, desc_en, *cats]).lower()
-        zh_tags = sorted({v for k, v in ZH.items() if re.search(r"\b" + re.escape(k) + r"s?\b", hay)})
+        zh_tags = zh_tags_for(hay)
         tags = list(dict.fromkeys([c.replace("_", " ") for c in cats if "," not in c and not c[:1].isdigit() and not c.lower().startswith(("featured", "quality", "valued", "pages ", "cc-", "self-published", "files ", "media ", "uploaded", "photographs taken"))][:20] + zh_tags))
         canon = f"https://{HOST}/wiki/File:{quote(name.replace(' ', '_'))}"
         lic_short = lic.strip()
-        attribution = f"“{title}” by {author}, {lic_short}" + (f" ({lic_url})" if lic_url else "") + ", via Wikimedia Commons"
+        attribution = attribution_for(title, author, lic_short, lic_url)
         yield Record({
             "id": "wmc-" + re.sub(r"[^A-Za-z0-9]+", "-", unquote(path.split(":", 1)[1]))[:90].strip("-").lower() + "-" + hashlib.sha1(name.encode()).hexdigest()[:8],
             "title": title[:200], "prompt": " ".join(x for x in (desc_zh, desc_en) if x), "artist": author[:120],

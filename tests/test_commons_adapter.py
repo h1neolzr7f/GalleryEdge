@@ -152,3 +152,37 @@ def test_ingest_token_file(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         gi.main(["--db", "libsql://x.invalid", "--token-file", str(f), "p.tar"])
     assert seen["tok"] == "FAKE-TOKEN"
+
+
+def test_sfw_recheck_blocks_bijinga():
+    from galleryedge_adapters.commons import sfw_ok
+    assert not sfw_ok({"title": "FAKE print", "tags": ["Bijin-ga"]})
+    assert not parse(page(cats=("Shunga",)))[0].data if False else parse(page(cats=("Shunga",))) == [Skip("sfw-blocked")]
+    assert sfw_ok({"title": "FAKE lake", "tags": ["湖"]})
+
+
+def test_clean_author_and_normalize():
+    from galleryedge_adapters.commons import clean_author, normalize_record
+    assert clean_author("© FAKE Super / CC BY-SA 4.0 (via Wikimedia Commons) You are free: to share") == "FAKE Super"
+    assert clean_author("FAKE Diego You are free: to share – to copy") == "FAKE Diego"
+    assert clean_author("") == "unknown"
+    r = normalize_record({"title": "FAKE Volcanoes at night", "prompt": "", "tags": ["Clouds and blue sky", "火山"], "license": "CC0", "author": "© FAKE X / CC0"})
+    assert r["author"] == "FAKE X" and "via Wikimedia Commons" in r["attribution"] and {"火山", "夜景"} <= set(r["tags"])
+    assert "Clouds and blue sky" in r["tags"]
+
+
+def test_multiword_tags_roundtrip(tmp_path):
+    from galleryedge_db import dialect, schema
+    from galleryedge_db.client import connect
+    from galleryedge_edge.app import split_tags
+    db = connect(f"file:{tmp_path}/x.db"); schema.init(db, dialect.detect(db))
+    [rec] = parse(page())
+    schema.ingest(db, [rec.data])
+    t = db.execute("SELECT tags_text FROM works").rows[0][0]
+    assert "Lakes of Nowhere" in split_tags(t) and split_tags("a b") == ["a", "b"]
+
+
+def test_templatestyles_css_never_leaks():
+    from galleryedge_adapters.commons import _txt, clean_author
+    assert _txt('<style>.mw-parser-output .x{color:red}</style><b>FAKE Name</b>') == "FAKE Name"
+    assert clean_author("FAKE Studio. Restored by .mw-parser-output .commons-creator-ta") == "FAKE Studio. Restored by"

@@ -36,3 +36,15 @@ GE_LIBSQL_TOKEN=$(cat token) ge-ingest --db libsql://<db> --table-prefix ge_ --p
 ```bash
 ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./packs --max-pages 1750
 ```
+
+### 爬虫实测中修复的问题（回归测试在 `tests/test_commons_adapter.py`）
+1. 网络超时（URLError）会让整个爬虫崩溃 → 现在重试一次（加 5 秒退避），再失败就记为 `network-error` 跳过；进度可以断点续跑。
+2. 429/503 以前直接跳过 → 现在遵守 `Retry-After`，没有就指数退避（上限 300 秒，默认重试 3 次），并发出 `crawler.backoff` 事件。
+3. 长时间爬取时没有任何输出 → stderr 每 N 页打印一行进度（页数、记录数、跳过数、队列长度），续跑时会提示"resuming from page …"。有 `--quiet` 和 `--progress-every`。
+4. `--contact` 不合法时直接抛 traceback → 改成一句明确的报错；commons 适配器强制 `--min-interval ≥ 1`。
+5. `ge-ingest` 只能从环境变量读 token → 新增 `--token-file`（纯文本，或 JSON 里的 rw_token/auth_token），避免 token 出现在命令行或 shell 历史里。
+6. 多词标签被空格拆散（"Clouds and blue sky" 变成 4 个词）→ `tags_text` 改用 ` | ` 连接，Python 和 TS 两端都兼容旧数据。
+7. 作者字段混进了许可证全文和 TemplateStyles 的 CSS → 新增 `clean_author` 并在 HTML 转文本时去掉 `<style>`；新增 `normalize_record`，已抓到的记录可以离线按新规则重新清洗，不用重爬。
+8. 中文词表漏掉了复数形式（volcanoes）→ 改用 `(?:e?s)?` 匹配。
+9. SFW 规则收紧后可以离线复核（`sfw_ok`），新增屏蔽词 shunga、bijin-ga、bathing 等。
+- 已知限制：Commons 分类页的翻页链接在 `/w/index.php` 下，被 robots 禁止，所以每个分类最多只能拿到 200 个文件；要多抓只能增加白名单分类。

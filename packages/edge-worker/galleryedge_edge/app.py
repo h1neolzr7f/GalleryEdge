@@ -43,6 +43,12 @@ def cover_svg(work_id: str, title: str) -> str:
             f'<rect width="400" height="300" fill="url(#g)"/>{shapes}<text x="16" y="284" fill="#fff" font-family="sans-serif" font-size="16" opacity="0.85">{esc(title)}</text></svg>')
 
 
+
+def split_tags(t) -> list[str]:
+    """tags_text is ' | '-joined (multi-word tags); older rows were space-joined."""
+    s = str(t or "")
+    return [x.strip() for x in (s.split("|") if "|" in s else s.split()) if x.strip()]
+
 class App:
     def __init__(self, db, dialect=None, *, demo_banner: bool = True):
         self.db = db
@@ -71,7 +77,7 @@ class App:
         rows = self.db.execute(f"SELECT w.id,w.title,w.artist,w.tags_text,w.license,w.image_count,w.cover_url FROM works w{w} ORDER BY w.created_at DESC, w.id LIMIT ? OFFSET ?",
                                [*args, PAGE, (page - 1) * PAGE]).dicts()
         for r in rows:
-            r["tags"] = r.pop("tags_text").split()
+            r["tags"] = split_tags(r.pop("tags_text"))
         return {"total": total, "page": page, "page_size": PAGE, "items": rows}
 
     def work(self, wid: str) -> dict | None:
@@ -79,7 +85,7 @@ class App:
         if not r:
             return None
         w = r[0]
-        w["tags"] = w.pop("tags_text").split()
+        w["tags"] = split_tags(w.pop("tags_text"))
         w["synthetic"] = bool(w["synthetic"])
         return w
 

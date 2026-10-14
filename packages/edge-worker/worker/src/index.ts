@@ -30,6 +30,9 @@ pre{white-space:pre-wrap;background:#161a22;border:1px solid #262c38;padding:12p
 /** Only hotlink thumbnails from hosts whose policy allows it (with attribution). */
 export const coverSrc = (w: any) => /^https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\/thumb\//.test(String(w.cover_url ?? "")) ? String(w.cover_url) : `/cover/${w.id}.svg`;
 
+/** tags_text is " | "-joined (multi-word tags); older rows were space-joined. */
+export const splitTags = (t: unknown) => { const s = String(t ?? ""); return (s.includes("|") ? s.split("|") : s.split(" ")).map(x => x.trim()).filter(Boolean); };
+
 export const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#x27;" }[c]!));
 const qs = (o: Record<string, string | number | undefined>) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString();
 
@@ -72,7 +75,7 @@ export class Site {
     page = Math.max(1, page);
     const total = Number((await this.db.execute(`SELECT count(*) FROM works w${w}`, args)).rows[0][0]);
     const items = rowsToDicts(await this.db.execute(`SELECT w.id,w.title,w.artist,w.tags_text,w.license,w.image_count,w.cover_url FROM works w${w} ORDER BY w.created_at DESC, w.id LIMIT ? OFFSET ?`, [...args, PAGE, (page - 1) * PAGE]))
-      .map(({ tags_text, ...r }) => ({ ...r, tags: String(tags_text).split(" ").filter(Boolean) }));
+      .map(({ tags_text, ...r }) => ({ ...r, tags: splitTags(tags_text) }));
     return { total, page, page_size: PAGE, items };
   }
 
@@ -80,7 +83,7 @@ export class Site {
     const r = rowsToDicts(await this.db.execute("SELECT * FROM works WHERE id=?", [id]));
     if (!r.length) return null;
     const { tags_text, synthetic, ...w } = r[0];
-    return { ...w, tags: String(tags_text).split(" ").filter(Boolean), synthetic: Boolean(synthetic) };
+    return { ...w, tags: splitTags(tags_text), synthetic: Boolean(synthetic) };
   }
 
   async tags() {
@@ -150,7 +153,7 @@ export class Site {
 
   workPage(w: any): string {
     const tags = w.tags.map((t: string) => `<a class="tag" href="/?${qs({ tag: t })}">${esc(t)}</a>`).join("");
-    return this.layout(String(w.title), `<main style="max-width:900px"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" referrerpolicy="no-referrer" style="width:100%;max-width:480px;border-radius:12px"><h2>${esc(w.title)}</h2><p class="meta">作者 <a href="/?${qs({ artist: w.artist ?? "" })}">${esc(w.artist)}</a> · 许可 ${w.license_url ? `<a href="${esc(w.license_url)}" rel="license noopener">${esc(w.license)}</a>` : esc(w.license)} · 来源 <a href="${esc(w.source_url)}" rel="nofollow noopener">${esc(w.source_url)}</a></p>${w.attribution ? `<p class="attribution" id="attribution">署名 Attribution：${esc(w.attribution)}</p>` : ""}<p>${tags}</p><h3>${w.attribution ? "描述 Description" : "提示词 Prompt"}</h3><pre id="prompt">${esc(w.prompt)}</pre><button id="copy" onclick="navigator.clipboard.writeText(document.getElementById('prompt').innerText).then(()=>this.textContent='已复制 ✓')">复制提示词 Copy</button></main>`);
+    return this.layout(String(w.title), `<main style="max-width:900px"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" referrerpolicy="no-referrer" style="width:100%;max-width:480px;border-radius:12px"><h2>${esc(w.title)}</h2><p class="meta">作者 <a href="/?${qs({ artist: w.artist ?? "" })}">${esc(w.artist)}</a> · 许可 ${w.license_url ? `<a href="${esc(w.license_url)}" rel="license noopener">${esc(w.license)}</a>` : esc(w.license)} · 来源 <a href="${esc(w.source_url)}" rel="nofollow noopener">${esc(w.source_url)}</a></p>${w.attribution ? `<p class="attribution" id="attribution">署名 Attribution：${esc(w.attribution)}</p>` : ""}<p>${tags}</p><h3>${w.attribution ? "描述 Description" : "提示词 Prompt"}</h3><pre id="prompt">${esc(w.prompt)}</pre><button id="copy" onclick="navigator.clipboard.writeText(document.getElementById('prompt').innerText).then(()=>this.textContent='已复制 ✓')">${w.attribution ? "复制描述 Copy" : "复制提示词 Copy"}</button></main>`);
   }
 }
 

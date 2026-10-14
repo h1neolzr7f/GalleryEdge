@@ -49,7 +49,7 @@ def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None 
             items.append(("INSERT INTO works(id,title,prompt,source_url,license,rights_note,rating,artist,tags_text,image_count,cover_key,created_at,retrieved_at,pack_id,synthetic,search_text,author,license_url,attribution,cover_url)"
                           " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                           (w["id"], w["title"], w.get("prompt", ""), w["source_url"], w["license"], w.get("rights_note"), w["rating"],
-                           w.get("artist"), " ".join(w.get("tags", [])), w.get("image_count", 1), w.get("cover_key"),
+                           w.get("artist"), " | ".join(w.get("tags", [])), w.get("image_count", 1), w.get("cover_key"),
                            w.get("created_at"), w.get("retrieved_at"), w.get("pack_id"), int(bool(w.get("synthetic"))), search_text(w),
                            w.get("author"), w.get("license_url"), w.get("attribution"), w.get("cover_url"))))
             for t in w.get("tags", []):
