@@ -70,8 +70,8 @@ class HttpFetcher:
         self.ua, self.timeout = user_agent, timeout
         self.opener = opener or urllib.request.build_opener(_NoRedirect)
 
-    def get(self, url: str) -> Response:
-        req = urllib.request.Request(url, headers={"User-Agent": self.ua, "Accept": "text/html,application/json;q=0.9,*/*;q=0.5"})
+    def get(self, url: str, headers: dict | None = None) -> Response:
+        req = urllib.request.Request(url, headers={"User-Agent": self.ua, "Accept": "text/html,application/json;q=0.9,*/*;q=0.5", **(headers or {})})
         try:
             with self.opener.open(req, timeout=self.timeout) as r:
                 return Response(url, r.status, dict(r.headers), r.read(5_000_000))
@@ -95,6 +95,7 @@ class CrawlConfig:
     pack_size: int = 500
     max_redirects: int = 3
     max_backoff_retries: int = 3  # on 429/503: honour Retry-After, exponential backoff, capped at 300s
+    concurrency: int = 1  # total in-flight requests; never more than ONE per host (min_interval/Crawl-delay still apply per host)
 
     def user_agent(self) -> str:
         if not self.contact or "@" not in self.contact and not self.contact.startswith("http"):
@@ -119,6 +120,8 @@ class State:
         CREATE TABLE IF NOT EXISTS skips(url TEXT PRIMARY KEY, reason TEXT, at TEXT);
         CREATE TABLE IF NOT EXISTS pending(id TEXT PRIMARY KEY, json TEXT, media TEXT);
         CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS validators(url TEXT PRIMARY KEY, etag TEXT, last_modified TEXT, at TEXT);
+        CREATE TABLE IF NOT EXISTS record_sha(id TEXT PRIMARY KEY, sha TEXT);
         """)
         self.db.commit()
 
@@ -129,6 +132,26 @@ class State:
     def pop(self):
         r = self.db.execute("SELECT url FROM frontier ORDER BY added LIMIT 1").fetchone()
         return r[0] if r else None
+
+    def pop_batch(self, n: int, host_of) -> list[str]:
+        """Up to n queued URLs, at most one per host (per-host-safe concurrency)."""
+        out, hosts = [], set()
+        for (u,) in self.db.execute("SELECT url FROM frontier ORDER BY added LIMIT ?", (max(n * 50, 200),)):
+            h = host_of(u)
+            if h not in hosts:
+                hosts.add(h); out.append(u)
+                if len(out) >= n:
+                    break
+        return out
+
+    def requeue_seen(self, before: str | None = None) -> int:
+        """Incremental recrawl: put pages last seen before `before` (ISO time; all if None) back on the frontier."""
+        q = "SELECT url FROM seen WHERE status >= 200" + (" AND at < ?" if before else "")
+        urls = [r[0] for r in self.db.execute(q, (before,) if before else ())]
+        for u in urls:
+            self.db.execute("INSERT OR IGNORE INTO frontier VALUES (?, ?)", (u, time.time_ns()))
+        self.db.commit()
+        return len(urls)
 
     def mark(self, url, status):
         self.db.execute("DELETE FROM frontier WHERE url=?", (url,))
@@ -166,10 +189,18 @@ class Crawler:
         self.on_event = on_event or (lambda level, code, msg, payload: None)
         self.heartbeat_every = heartbeat_every
         self.progress, self.progress_every = progress, progress_every
+        self.recrawl = False
+        import threading
+        self._lock = threading.Lock()
+        self._validators: dict[str, tuple] = {}
 
     # --- policy ---
     def _host(self, url):
         return urlsplit(url).netloc.lower()
+
+    def _bump(self, k, n=1):
+        with self._lock:
+            self.stats[k] = self.stats.get(k, 0) + n
 
     def _wait(self, host, extra: float = 0):
         gap = max(self.cfg.min_interval_s, extra)
@@ -183,7 +214,7 @@ class Crawler:
     def _robots(self, url):
         s = urlsplit(url)
         host = s.netloc.lower()
-        if host not in self.robots:
+        if host not in self.robots:  # only one in-flight request per host, so no double fetch
             rurl = f"{s.scheme}://{s.netloc}/robots.txt"
             self._wait(host)
             try:
@@ -227,13 +258,17 @@ class Crawler:
             for attempt in range(2):  # one polite retry on network errors, then skip
                 self._wait(host, float(delay) + 5.0 * attempt)
                 try:
-                    r = self.fetcher.get(url)
+                    v = self._validators.get(url)
+                    h = {k: x for k, x in (("If-None-Match", v[0]), ("If-Modified-Since", v[1])) if x} if v else {}
+                    r = self.fetcher.get(url, headers=h) if h else self.fetcher.get(url)
                     break
                 except (OSError, ValueError):
                     r = None
             if r is None:
                 return Skip("network-error")
-            self.stats["fetched"] += 1
+            self._bump("fetched")
+            if r.status == 304:
+                return Skip("not-modified")
             if r.status in (301, 302, 303, 307, 308):
                 loc = urljoin(url, r.headers.get("Location", r.headers.get("location", "")))
                 if any(h in urlsplit(loc).path.lower() for h in LOGIN_HINTS):
@@ -247,7 +282,7 @@ class Crawler:
                 ra = str(r.headers.get("Retry-After", r.headers.get("retry-after", "")) or "")
                 wait = min(300.0, float(ra) if ra.isdigit() else 10.0 * 2 ** backoffs)
                 backoffs += 1
-                self.stats["backoffs"] = self.stats.get("backoffs", 0) + 1
+                self._bump("backoffs")
                 self.on_event("warn", "crawler.backoff", f"{host}: HTTP {r.status}, waiting {wait:.0f}s", {"url": url, "wait_s": wait})
                 self._wait(host, wait)
                 continue
@@ -259,6 +294,17 @@ class Crawler:
         return Skip("too-many-redirects")
 
     # --- main loop ---
+    def run_incremental(self, since: str | None = None) -> dict:
+        """Re-fetch pages seen before `since` with If-None-Match/If-Modified-Since; 304 => skipped as not-modified,
+        changed records are re-emitted, unchanged ones are dropped (stats: unchanged/updated)."""
+        self.recrawl = True
+        n = self.st.requeue_seen(since)
+        self.st.counter("pages", -self.st.counter("pages"))  # fresh page budget for this pass
+        self.st.db.execute("DELETE FROM skips"); self.st.db.commit()
+        if self.progress:
+            self.progress(f"[{self.a.name}] incremental recrawl: {n} pages re-queued")
+        return self.run()
+
     def run(self) -> dict:
         resumed = bool(self.st.counter("started"))
         if not resumed:
@@ -270,13 +316,37 @@ class Crawler:
         if self.progress:
             self.progress(f"[{self.a.name}] " + (f"resuming from page {pages}, {self.st.db.execute('SELECT count(*) FROM frontier').fetchone()[0]} queued (state {self.st_path})" if resumed else "starting fresh"))
         self.on_event("info", "crawler.start", f"{self.a.name} crawl started", {"adapter": self.a.name, "resumed_at_page": pages})
-        while pages < self.cfg.max_pages and (url := self.st.pop()):
-            res = self._fetch(url)
+        conc = max(1, int(self.cfg.concurrency))
+        pool = None
+        if conc > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            pool = ThreadPoolExecutor(conc)
+        while pages < self.cfg.max_pages:
+            batch = self.st.pop_batch(min(conc, self.cfg.max_pages - pages), self._host) if pool else [u for u in [self.st.pop()] if u]
+            if not batch:
+                break
+            for u in batch:  # validators are read in the main thread (sqlite is single-threaded)
+                v = self.st.db.execute("SELECT etag,last_modified FROM validators WHERE url=?", (u,)).fetchone()
+                if v: self._validators[u] = v
+            results = list(pool.map(self._fetch, batch)) if pool else [self._fetch(batch[0])]
+            for url, res in zip(batch, results):
+                pages = self._handle(url, res, pages)
+        if pool:
+            pool.shutdown()
+        self._finish(pages)
+        return self.stats
+
+    def _handle(self, url, res, pages):
+        if True:
             if isinstance(res, Skip):
                 self.st.skip(url, res.reason); self.stats["skipped"] += 1
-                self.st.mark(url, 0)
+                self.st.mark(url, 304 if res.reason == "not-modified" else 0)  # 304 stays eligible for the next recrawl
                 self._tick(pages)
-                continue
+                return pages
+            et = res.headers.get("ETag") or res.headers.get("etag")
+            lm = res.headers.get("Last-Modified") or res.headers.get("last-modified")
+            if et or lm:
+                self.st.db.execute("INSERT OR REPLACE INTO validators VALUES (?,?,?,?)", (url, et, lm, _now()))
             for item in self.a.parse(res):
                 if isinstance(item, Link):
                     self.st.push(canonical(urljoin(res.url, item.url)))
@@ -290,6 +360,9 @@ class Crawler:
             if pages % self.heartbeat_every == 0:
                 self.on_event("info", "crawler.heartbeat", f"{self.a.name}: {pages} pages", {"adapter": self.a.name, "pages": pages, **self.stats})
             self._maybe_flush(False)
+        return pages
+
+    def _finish(self, pages):
         self._maybe_flush(True)
         self.stats["pages_total"] = pages
         self.stats["packs"] = [str(p) for p in self.packs]
@@ -300,7 +373,6 @@ class Crawler:
                           f"{self.a.name} skipped: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())), {"adapter": self.a.name, "reasons": reasons})
         self.on_event("info", "crawler.done", f"{self.a.name} done: {self.stats['records']} records, {len(self.packs)} packs",
                       {"adapter": self.a.name, **{k: v for k, v in self.stats.items() if k != "packs"}, "packs": len(self.packs)})
-        return self.stats
 
     def _tick(self, pages: int):
         self._n = getattr(self, "_n", 0) + 1
@@ -312,7 +384,15 @@ class Crawler:
     def _accept(self, rec: Record, res: Response):
         d = dict(rec.data)
         rid = str(d.get("id", ""))
-        if not rid or self.st.db.execute("SELECT 1 FROM emitted WHERE id=? UNION SELECT 1 FROM pending WHERE id=?", (rid, rid)).fetchone():
+        sha = hashlib.sha256(json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()
+        if rid and self.recrawl and not self.st.db.execute("SELECT 1 FROM pending WHERE id=?", (rid,)).fetchone():
+            old = self.st.db.execute("SELECT sha FROM record_sha WHERE id=?", (rid,)).fetchone()
+            if old and old[0] == sha:
+                self.stats["unchanged"] = self.stats.get("unchanged", 0) + 1
+                return
+            if old:
+                self.stats["updated"] = self.stats.get("updated", 0) + 1
+        elif not rid or self.st.db.execute("SELECT 1 FROM emitted WHERE id=? UNION SELECT 1 FROM pending WHERE id=?", (rid, rid)).fetchone():
             self.stats["dupes"] += 1
             return
         if not d.get("license"):
@@ -323,7 +403,8 @@ class Crawler:
                            "robots": "allowed", "content_sha256": hashlib.sha256(res.body).hexdigest(),
                            "media_fetched": self.cfg.fetch_media}
         media = rec.media_urls if self.cfg.fetch_media else []
-        self.st.db.execute("INSERT INTO pending VALUES (?,?,?)", (rid, json.dumps(d), json.dumps(media)))
+        self.st.db.execute("INSERT OR REPLACE INTO pending VALUES (?,?,?)", (rid, json.dumps(d), json.dumps(media)))
+        self.st.db.execute("INSERT OR REPLACE INTO record_sha VALUES (?,?)", (rid, sha))
         self.st.db.commit()
         self.stats["records"] += 1
 
