@@ -209,8 +209,8 @@ def test_empty_category_is_reported():
 
 
 def test_llama_not_lama():
-    from galleryedge_adapters.commons import SENSITIVE
-    assert not SENSITIVE.search("FAKE llama in the hills") and SENSITIVE.search("FAKE lama prays")
+    from galleryedge_adapters.commons import sensitive_reason
+    assert sensitive_reason("FAKE llama in the hills") is None and sensitive_reason("FAKE lama prays") is not None
 
 
 def test_cli_categories(capsys):
