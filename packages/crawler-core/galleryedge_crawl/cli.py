@@ -25,6 +25,8 @@ def main(argv=None) -> int:
     ap.add_argument("--fetch-media", action="store_true", help="also download media (off by default: metadata only)")
     ap.add_argument("--categories", help="wikimedia-commons: comma-separated subset of the built-in SFW allow-list")
     ap.add_argument("--list-categories", action="store_true", help="wikimedia-commons: print the allow-list and exit")
+    ap.add_argument("--category-pages", type=int, default=1, help="wikimedia-commons: follow up to N listing pages (200 files each) per category")
+    ap.add_argument("--queries", help="openverse: comma-separated search terms (default: built-in neutral list)")
     ap.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
     ap.add_argument("--progress-every", type=int, default=50, help="print a progress line every N pages (stderr)")
     a = ap.parse_args(argv)
@@ -38,10 +40,16 @@ def main(argv=None) -> int:
             print("\n".join(SFW_CATEGORIES)); return 0
         cats = [c.strip() for c in a.categories.split(",") if c.strip()] if a.categories else list(SFW_CATEGORIES)
         try:
-            adapter = ADAPTERS["wikimedia-commons"](cats)
+            adapter = ADAPTERS["wikimedia-commons"](cats, max_category_pages=a.category_pages)
         except ValueError as e:
             ap.error(f"{e} (see --list-categories)")
         fetcher, hosts = None, ["commons.wikimedia.org"]
+    elif a.adapter == "openverse":
+        if a.min_interval < 3.0:
+            ap.error("openverse: --min-interval must be >= 3.0 (anonymous limit 20/min, 200/day)")
+        qs = [q.strip() for q in a.queries.split(",") if q.strip()] if a.queries else None
+        adapter = ADAPTERS["openverse"](qs) if qs else ADAPTERS["openverse"]()
+        fetcher, hosts = None, ["api.openverse.org"]
     else:
         adapter, fetcher, hosts = ADAPTERS["demo-selfhost"](a.base), None, [urlsplit(a.base).netloc]
     if a.list_categories:
