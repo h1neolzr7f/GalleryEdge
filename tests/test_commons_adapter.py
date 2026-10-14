@@ -93,3 +93,62 @@ def test_network_errors_are_skipped_not_fatal(tmp_path):
     st = Crawler(CommonsAdapter(["Featured_pictures_of_landscapes"]), cfg, state_path=str(tmp_path / "s.db"), out_dir=str(tmp_path / "p"),
                  fetcher=F(), sleep=lambda s: None).run()
     assert st["skip_reasons"] == {"network-error": 1}
+
+
+def test_retry_after_backoff_then_success(tmp_path):
+    calls, waits = [], []
+
+    class F:
+        ua = "x"
+        def get(self, url):
+            if url.endswith("robots.txt"):
+                return Response(url, 404, {}, b"")
+            calls.append(url)
+            if len(calls) <= 2:
+                return Response(url, 429, {"Retry-After": "7"}, b"")
+            return Response(url, 200, {}, b"")
+    ev = []
+    cfg = CrawlConfig(contact="https://example.invalid/c", allowed_hosts=["commons.wikimedia.org"], min_interval_s=0)
+    t = [0.0]
+    cr = Crawler(CommonsAdapter(["Featured_pictures_of_landscapes"]), cfg, state_path=str(tmp_path / "s.db"), out_dir=str(tmp_path / "p"),
+                 fetcher=F(), clock=lambda: t[0], sleep=lambda s: (waits.append(s), t.__setitem__(0, t[0] + s)),
+                 on_event=lambda *a: ev.append(a[1]))
+    st = cr.run()
+    assert len(calls) == 3 and st["backoffs"] == 2 and "crawler.backoff" in ev and st["skip_reasons"] == {}
+    assert sum(waits) >= 14
+
+
+def test_backoff_gives_up_and_progress_lines(tmp_path):
+    class F:
+        ua = "x"
+        def get(self, url):
+            return Response(url, 404, {}, b"") if url.endswith("robots.txt") else Response(url, 503, {}, b"")
+    lines = []
+    cfg = CrawlConfig(contact="https://example.invalid/c", allowed_hosts=["commons.wikimedia.org"], min_interval_s=0, max_backoff_retries=2)
+    st = Crawler(CommonsAdapter(["Featured_pictures_of_landscapes"]), cfg, state_path=str(tmp_path / "s.db"), out_dir=str(tmp_path / "p"),
+                 fetcher=F(), sleep=lambda s: None, progress=lines.append, progress_every=1).run()
+    assert st["skip_reasons"] == {"http-503": 1} and st["backoffs"] == 2
+    assert lines[0].endswith("starting fresh") and any("pages 0/" in l and "skipped 1" in l for l in lines)
+    st2 = Crawler(CommonsAdapter(["Featured_pictures_of_landscapes"]), cfg, state_path=str(tmp_path / "s.db"), out_dir=str(tmp_path / "p"),
+                  fetcher=F(), sleep=lambda s: None, progress=lines.append).run()
+    assert any("resuming from page 0" in l for l in lines)
+
+
+def test_cli_rejects_fake_contact(capsys):
+    from galleryedge_crawl.cli import main
+    with pytest.raises(SystemExit):
+        main(["--adapter", "wikimedia-commons", "--contact", "nobody"])
+    assert "real email address" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["--adapter", "wikimedia-commons", "--contact", "a@b.c", "--min-interval", "0.2"])
+
+
+def test_ingest_token_file(tmp_path, monkeypatch):
+    import json
+    import galleryedge_ingest as gi
+    seen = {}
+    monkeypatch.setattr(gi.C, "connect", lambda url, tok, prefix="": seen.setdefault("tok", tok) and (_ for _ in ()).throw(SystemExit(0)))
+    f = tmp_path / "t.json"; f.write_text(json.dumps({"rw_token": "FAKE-TOKEN"}))
+    with pytest.raises(SystemExit):
+        gi.main(["--db", "libsql://x.invalid", "--token-file", str(f), "p.tar"])
+    assert seen["tok"] == "FAKE-TOKEN"
