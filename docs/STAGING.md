@@ -79,3 +79,7 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
   上传用 `wrangler versions upload`，激活/回滚用 Workers Deployments API（100% 单版本）。脚本名必须是 `galleryedge-*`，其它 Worker（含 prod `nai`）一律拒绝。
   注意：Cloudflare 的版本包含当时的 secrets；回滚到早于某次 `secret put` 的版本会连同旧 secrets 一起回滚。
 - `ge-db-backup dump --db <url> --token-file <json> --out x.jsonl.gz`（只读 token 即可）/ `restore --db <空库> --src x.jsonl.gz`（仅空库、校验 sha256 与行数、重建 FTS）。
+## 存储：WebDAV（类网盘）后端 + 读时回温（polish-6）
+- `type: "webdav"`：通用 RFC 4918（Nextcloud/群晖/坚果云/pCloud/Koofr/rclone serve webdav 等），凭据 `credential_ref` → vault JSON `{"username","password"}`。默认 tier=cold。
+- `tiering.promote_on_read: true`：读取冷层对象时复制回热层并校验，成功后删除冷层副本；失败不影响读取；跳过 > 50MB 与 ledger。
+- 测试用本地 WsgiDAV 真服务器（tests/test_webdav.py）。

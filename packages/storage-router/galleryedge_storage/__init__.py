@@ -178,6 +178,116 @@ CREATE TABLE IF NOT EXISTS usage_snapshots(ts TEXT NOT NULL, meter TEXT NOT NULL
 """
 
 
+class WebDAVBackend:
+    """Generic WebDAV (RFC 4918) backend: Nextcloud/ownCloud, Synology, Box/pCloud/Koofr WebDAV, rclone serve webdav...
+    Uses PUT/GET/HEAD/DELETE/MKCOL/PROPFIND only; credentials (basic auth) come from the vault, never from config."""
+
+    def __init__(self, id: str, url: str, tier: str = "cold", *, username: str | None = None, password: str | None = None,
+                 timeout: float = 30.0, read_only: bool = False, opener=None):
+        import urllib.request
+        self.id, self.tier, self.read_only, self.timeout = id, tier, read_only, timeout
+        self.base = url.rstrip("/") + "/"
+        self._auth = None
+        if username is not None:
+            import base64
+            self._auth = "Basic " + base64.b64encode(f"{username}:{password or ''}".encode()).decode()
+        self.opener = opener or urllib.request.build_opener()
+        self._dirs: set[str] = set()
+
+    def _req(self, method, key="", data=None, headers=None, ok=(200, 201, 204, 207)):
+        import urllib.error
+        import urllib.request
+        from urllib.parse import quote
+        url = self.base + quote(key)
+        h = {**(headers or {})}
+        if self._auth:
+            h["Authorization"] = self._auth
+        req = urllib.request.Request(url, data=data, method=method, headers=h)
+        try:
+            with self.opener.open(req, timeout=self.timeout) as r:
+                return r.status, r.read(), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            if e.code in ok:
+                return e.code, e.read(), dict(e.headers or {})
+            return e.code, b"", {}
+        except OSError as e:
+            raise StorageError(f"{self.id}: {e}") from None
+
+    def _rw(self):
+        if self.read_only:
+            raise StorageError(f"{self.id}: read-only backend")
+
+    def _mkdirs(self, key):
+        parts = key.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            d = "/".join(parts[:i]) + "/"
+            if d in self._dirs:
+                continue
+            st, _, _ = self._req("MKCOL", d)
+            if st not in (201, 405, 301):  # 405 = already exists
+                raise StorageError(f"{self.id}: MKCOL {d} -> {st}")
+            self._dirs.add(d)
+
+    def put(self, key, data):
+        self._rw(); check_key(key); self._mkdirs(key)
+        st, _, _ = self._req("PUT", key, data, {"Content-Type": "application/octet-stream"})
+        if st not in (200, 201, 204):
+            raise StorageError(f"{self.id}: PUT {key} -> {st}")
+
+    def get(self, key):
+        st, body, _ = self._req("GET", check_key(key))
+        if st != 200:
+            raise StorageError(f"{self.id}: missing {key} ({st})")
+        return body
+
+    def head(self, key):
+        st, _, h = self._req("HEAD", check_key(key))
+        if st != 200:
+            return None
+        return Head(int(h.get("Content-Length") or h.get("content-length") or 0), None)
+
+    def delete(self, key):
+        self._rw()
+        st, _, _ = self._req("DELETE", check_key(key))
+        if st not in (200, 204, 404):
+            raise StorageError(f"{self.id}: DELETE {key} -> {st}")
+
+    def _propfind(self, path):
+        import xml.etree.ElementTree as ET
+        from urllib.parse import unquote, urlsplit
+        body = b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>'
+        st, xml, _ = self._req("PROPFIND", path, body, {"Depth": "1", "Content-Type": "application/xml"})
+        if st == 404:
+            return []
+        if st != 207:
+            raise StorageError(f"{self.id}: PROPFIND {path} -> {st}")
+        base_path = urlsplit(self.base).path
+        out = []
+        for r in ET.fromstring(xml).findall("{DAV:}response"):
+            href = unquote(urlsplit(r.findtext("{DAV:}href") or "").path)
+            rel = href[len(base_path):] if href.startswith(base_path) else href.lstrip("/")
+            if rel.rstrip("/") == path.rstrip("/"):
+                continue
+            is_dir = r.find(".//{DAV:}collection") is not None
+            size = int(r.findtext(".//{DAV:}getcontentlength") or 0)
+            out.append((rel, is_dir, size))
+        return out
+
+    def _walk(self, path=""):
+        for rel, is_dir, size in self._propfind(path):
+            if is_dir:
+                yield from self._walk(rel if rel.endswith("/") else rel + "/")
+            else:
+                yield rel, size
+
+    def list(self, prefix=""):
+        return sorted(k for k, _ in self._walk() if k.startswith(prefix))
+
+    def usage(self):
+        items = list(self._walk())
+        return sum(s for _, s in items), len(items)
+
+
 def _now(): return datetime.now(timezone.utc)
 
 
@@ -193,8 +303,10 @@ class Rule:
 
 
 class Router:
-    def __init__(self, conn, backends: list, rules: list[Rule], *, is_up=lambda bid: True, emit=None):
+    def __init__(self, conn, backends: list, rules: list[Rule], *, is_up=lambda bid: True, emit=None,
+                 promote_on_read: bool = False, promote_max_bytes: int = 50 * 2**20):
         self.conn, self.b = conn, {x.id: x for x in backends}
+        self.promote_on_read, self.promote_max_bytes = promote_on_read, promote_max_bytes
         self.rules = sorted(rules, key=lambda r: r.priority)
         self.is_up, self.emit = is_up, emit or (lambda *a: None)
         conn.executescript(SCHEMA); conn.commit()
@@ -232,7 +344,33 @@ class Router:
         if sha(data) != r[1]:
             raise StorageError(f"integrity error for {key} on {r[0]}")
         self.conn.execute("UPDATE objects SET last_access=? WHERE key=?", (_iso(now or _now()), key)); self.conn.commit()
+        if self.promote_on_read and self.b[r[0]].tier != "hot" and len(data) <= self.promote_max_bytes:
+            self._promote(key, data, r[0], now)
         return data
+
+    def _promote(self, key, data, src_id, now=None):
+        """Copy a cold object back to a hot backend (verified), then drop the cold copy. Failures never break the read."""
+        for be in self.candidates(key, len(data)):
+            if be.tier != "hot" or be.id == src_id or not self.is_up(be.id) or getattr(be, "read_only", False):
+                continue
+            try:
+                be.put(key, data)
+                h = be.head(key)
+                if not h or h.size != len(data) or (h.sha256 and h.sha256 != sha(data)):
+                    raise StorageError("verify after promote failed")
+            except StorageError as e:
+                self.emit("warn", "storage.promote_failed", f"promote {key} to {be.id} failed: {e}"); continue
+            t = _iso(now or _now())
+            self.conn.execute("UPDATE objects SET backend_id=?, tier=?, last_access=? WHERE key=?", (be.id, be.tier, t, key)); self.conn.commit()
+            src = self.b[src_id]
+            if not getattr(src, "read_only", False) and not protected(key):
+                try:
+                    src.delete(key)
+                except StorageError:
+                    pass  # stale cold copy is harmless; cleanup can remove it later
+            self.emit("info", "storage.promoted", f"{key}: {src_id} -> {be.id}")
+            return be.id
+        return None
 
 
 def protected(key: str) -> str | None:
@@ -357,6 +495,14 @@ def make_backend(b: dict, vault=None, *, client_factory=None):
         client = client_factory(endpoint_url=b.get("url"), region_name=b.get("region", "auto"),
                                 aws_access_key_id=creds.get("access_key_id"), aws_secret_access_key=creds.get("secret_access_key"))
         return S3Backend(b["id"], client, b["bucket"], b.get("tier", "hot"), b.get("prefix", ""))
+    if t == "webdav":
+        creds = {}
+        if b.get("credential_ref"):
+            if vault is None:
+                raise StorageError(f"{b['id']}: vault locked, cannot read {b['credential_ref']}")
+            creds = json.loads(vault.resolve(b["credential_ref"]))
+        return WebDAVBackend(b["id"], b["url"], b.get("tier", "cold"), username=creds.get("username"), password=creds.get("password"),
+                             read_only=bool(b.get("read_only")))
     raise StorageError(f"{b['id']}: unsupported backend type {t}")
 
 

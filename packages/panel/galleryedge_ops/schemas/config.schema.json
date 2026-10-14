@@ -103,7 +103,8 @@
               "http",
               "libsql",
               "s3",
-              "r2"
+              "r2",
+              "webdav"
             ]
           },
           "path": {
@@ -231,6 +232,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "promote_on_read": {
+          "type": "boolean",
+          "default": false,
+          "description": "copy cold objects back to a hot backend when they are read"
+        },
         "hot_to_cold_days": {
           "type": "integer",
           "minimum": 1,

@@ -412,7 +412,8 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
         bes = [LocalBackend(b["id"], b["path"], b.get("tier", "hot")) for b in local]
         up = {r["id"]: r["status"] != "down" for r in rows("SELECT id,status FROM backend_status")}
         return Router(conn, bes, [Rule(b["id"]) for b in local], is_up=lambda i: up.get(i, True),
-                      emit=lambda lvl, code, msg: events.emit(conn, "agent", lvl, code, msg))
+                      emit=lambda lvl, code, msg: events.emit(conn, "agent", lvl, code, msg),
+                      promote_on_read=bool(tier_cfg.get("promote_on_read")))
 
     def meters_now() -> dict:
         m = {}
