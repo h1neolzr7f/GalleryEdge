@@ -35,6 +35,10 @@ MIGRATIONS: list[tuple[int, str]] = [
         expires_at TEXT NOT NULL, last_seen TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS login_failures(username TEXT NOT NULL, ts TEXT NOT NULL);
     """),
+    (4, """
+    CREATE TABLE IF NOT EXISTS user_totp(username TEXT PRIMARY KEY, secret TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0,
+        last_step INTEGER NOT NULL DEFAULT -1, created_at TEXT NOT NULL);
+    """),
 ]
 
 

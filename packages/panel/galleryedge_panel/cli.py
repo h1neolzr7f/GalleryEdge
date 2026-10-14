@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+from pathlib import Path
 import sys
 
 from galleryedge_ops import auth, config, db
@@ -49,7 +50,12 @@ def main(argv=None) -> int:
     index_db = None
     if cfg["database"].get("index"):
         from galleryedge_db.client import connect as idx_connect
-        index_db = idx_connect(cfg["database"]["index"], vault.resolve(cfg["database"].get("index_token_ref")) if vault else None)
+        tok = vault.resolve(cfg["database"].get("index_token_ref")) if vault and cfg["database"].get("index_token_ref") else None
+        tf = cfg["database"].get("index_token_file")
+        if not tok and tf:  # 0600 file with a raw token or JSON {"ro_token": ...}; only a READ-ONLY token belongs here
+            raw = Path(tf).read_text("utf-8").strip()
+            tok = json.loads(raw).get("ro_token") if raw.startswith("{") else raw
+        index_db = idx_connect(cfg["database"]["index"], tok, prefix=cfg["database"].get("index_prefix", ""))
     app = create_app(cfg, conn, vault, index_db=index_db)
     if a.cmd == "release":
         from galleryedge_ops.releases import ReleaseError

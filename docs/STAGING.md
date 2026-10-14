@@ -68,3 +68,8 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
 - `openverse` 适配器：仅 CC0/PDM/CC BY/CC BY-SA，过滤 mature/sensitivity 与 SFW+敏感词表，署名含 provider。
   **注意**：api.openverse.org/robots.txt 对 `*` 禁止 `/v1/images/`，爬虫遵守 robots，因此对线上 API 不会抓取（测试覆盖此行为）；不绕过、不自动注册客户端。
 - Commons 新增中性分类（膜翅目、蜻蜓、软体动物、Quality images 花/鸟/昆虫/真菌），并支持分类分页 `--category-pages N`（把 robots 禁止的 `/w/index.php` 翻页链接改写为 `/wiki/Category:X?filefrom=`）。
+
+## 面板：只读站点内容 + 远程模式 TOTP（polish-4）
+- `database.index` + `index_token_file`（0600，只取 `ro_token`）→「站点内容」页只读浏览/搜索 staging 内容库。
+- 两步验证（RFC 6238，标准身份验证器可用）：绑定/重置只允许本机；`panel.allow_remote=true` 时非本机登录必须已启用 TOTP，否则拒绝；动态码防重放（last_step）。
+- 远程部署要求：放在 HTTPS 反代后面（cookie secure），仍需登录 + TOTP；默认仍 `bind=127.0.0.1`，本次未对公网暴露。

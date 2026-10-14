@@ -71,6 +71,15 @@
         "index_token_ref": {
           "type": "string",
           "pattern": "^vault:[A-Za-z0-9_.-]+$"
+        },
+        "index_token_file": {
+          "type": "string",
+          "description": "path to a 0600 file with a READ-ONLY index token (raw, or JSON with ro_token); alternative to index_token_ref"
+        },
+        "index_prefix": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]*$",
+          "description": "table prefix of the index DB (e.g. ge_)"
         }
       }
     },
