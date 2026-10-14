@@ -103,6 +103,11 @@
           "url": {
             "type": "string"
           },
+          "read_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "observe only: never write, probe, migrate into or clean this backend"
+          },
           "tier": {
             "enum": [
               "hot",

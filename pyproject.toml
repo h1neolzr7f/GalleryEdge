@@ -19,6 +19,7 @@ ge-demo = "galleryedge_edge.demo:main"
 ge-panel = "galleryedge_panel.cli:main"
 ge-crawl = "galleryedge_crawl.cli:main"
 ge-ingest = "galleryedge_ingest:main"
+ge-aitag = "galleryedge_aitag:main"
 ge-demo-source = "galleryedge_demosource:main"
 
 [build-system]
@@ -26,10 +27,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source", "packages/storage-router"]
+where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source", "packages/storage-router", "packages/aitag-bridge"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source", "packages/storage-router"]
+pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker", "packages/pack-format", "packages/ingest", "packages/crawler-core", "packages/crawler-adapters", "apps/demo-source", "packages/storage-router", "packages/aitag-bridge"]
 [tool.setuptools.package-data]
 galleryedge_ops = ["schemas/*.json"]

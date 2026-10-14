@@ -25,9 +25,19 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ge-ingest", description="verify and ingest site-pack-v1 tars")
     ap.add_argument("--db", default="file:./var/demo.db")
     ap.add_argument("--panel-db", help="panel DB (file:...) to receive Turso row metering + ingest events")
+    ap.add_argument("--table-prefix", default=os.environ.get("GE_TABLE_PREFIX", ""), help="namespace tables, e.g. ge_ (for a shared DB)")
+    ap.add_argument("--token-file", help="read the libSQL auth token from this file (or a JSON file's rw_token/auth_token) instead of $GE_LIBSQL_TOKEN")
     ap.add_argument("packs", nargs="+")
     a = ap.parse_args(argv)
-    db = C.connect(a.db, os.environ.get("GE_LIBSQL_TOKEN"))
+    token = os.environ.get("GE_LIBSQL_TOKEN")
+    if a.token_file:
+        raw = open(a.token_file, encoding="utf-8").read().strip()
+        if raw.startswith("{"):
+            import json as _j
+            d = _j.loads(raw); token = d.get("rw_token") or d.get("auth_token")
+        else:
+            token = raw
+    db = C.connect(a.db, token, prefix=a.table_prefix)
     schema.init(db, dialect.detect(db))
     conn = None
     if a.panel_db:

@@ -363,7 +363,8 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
     # ---------- storage tiering + cost ----------
     from galleryedge_storage import LocalBackend, Router, Rule, forecast, migrate, monthly_cost, plan_cold_migration, snapshot
 
-    local = [b for b in cfg["backends"] if b["type"] == "local" and b.get("path")]
+    observed = [b for b in cfg["backends"] if b["type"] == "local" and b.get("path")]
+    local = [b for b in observed if not b.get("read_only")]  # only writable backends take placements / migrations
     cold = next((b for b in local if b.get("tier") == "cold"), None)
     tier_cfg = cfg.get("tiering", {})
 
@@ -375,8 +376,8 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
 
     def meters_now() -> dict:
         m = {}
-        for b in local:
-            used, n = LocalBackend(b["id"], b["path"]).usage()
+        for b in observed:
+            used, n = LocalBackend(b["id"], b["path"], read_only=True).usage()
             m[f"bytes:{b['id']}"] = used; m[f"objects:{b['id']}"] = n
         return m
 

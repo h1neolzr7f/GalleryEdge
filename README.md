@@ -102,3 +102,6 @@ ge-panel --config config.json release rollback                                  
 新页面：配置中心（端点 + 凭据掩码 + 保险库设置/轮换）、用户（邀请码）、发布、安全自检（含备份恢复演练）。详见 [docs/WHITEPAPER.md](docs/WHITEPAPER.md)。
 
 ![login](docs/screenshots/phase6-02-login.png) ![selfcheck](docs/screenshots/phase6-06-selfcheck.png)
+
+## Phase 7 — 接入现网预发布 / staging integration
+aitag 只读桥（`ge-aitag`）、`ge_` 表前缀（`--table-prefix`）、中文 FTS5 搜索、面板只读观察后端（`read_only: true`）、独立 staging Worker（经服务绑定只读代理现网图片）。详见 [docs/STAGING.md](docs/STAGING.md)。

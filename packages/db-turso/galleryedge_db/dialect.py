@@ -11,10 +11,7 @@ from __future__ import annotations
 import re
 
 
-def fts5_query(q: str) -> str:
-    """Turn free user text into a safe FTS5 MATCH expression (AND of quoted prefix terms)."""
-    terms = re.findall(r"[\w\-]+", q, flags=re.UNICODE)
-    return " ".join('"' + t.replace('"', "") + '"*' for t in terms[:12])
+from .text import fts5_query  # noqa: E402,F401  (re-exported)
 
 
 class Fts5Dialect:
@@ -22,16 +19,16 @@ class Fts5Dialect:
 
     def ddl(self) -> str:
         return """
-CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(title, prompt, tags, artist, content='works', content_rowid='rowid', tokenize='unicode61');
+CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(title, prompt, tags, artist, search_text, content='works', content_rowid='rowid', tokenize='unicode61');
 CREATE TRIGGER IF NOT EXISTS works_ai AFTER INSERT ON works BEGIN
-  INSERT INTO works_fts(rowid,title,prompt,tags,artist) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist);
+  INSERT INTO works_fts(rowid,title,prompt,tags,artist,search_text) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist,new.search_text);
 END;
 CREATE TRIGGER IF NOT EXISTS works_ad AFTER DELETE ON works BEGIN
-  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags,artist) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist);
+  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags,artist,search_text) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist,old.search_text);
 END;
 CREATE TRIGGER IF NOT EXISTS works_au AFTER UPDATE ON works BEGIN
-  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags,artist) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist);
-  INSERT INTO works_fts(rowid,title,prompt,tags,artist) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist);
+  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags,artist,search_text) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist,old.search_text);
+  INSERT INTO works_fts(rowid,title,prompt,tags,artist,search_text) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist,new.search_text);
 END;
 """
 
@@ -43,11 +40,12 @@ class TursoFtsDialect:
     name = "turso-fts"
 
     def ddl(self) -> str:
-        return "CREATE INDEX IF NOT EXISTS works_fts_idx ON works USING fts (title, prompt, tags_text, artist);"
+        return "CREATE INDEX IF NOT EXISTS works_fts_idx ON works USING fts (title, prompt, tags_text, artist, search_text);"
 
     def search_sql(self, q: str) -> tuple[str, list]:
-        terms = " ".join(re.findall(r"[\w\-]+", q, flags=re.UNICODE)[:12])
-        return ("SELECT id FROM works WHERE fts_match(title, prompt, tags_text, artist, ?) ORDER BY fts_score(title, prompt, tags_text, artist, ?) DESC", [terms, terms])
+        from .text import cjk_space
+        terms = cjk_space(" ".join(re.findall(r"[\w\-]+", q, flags=re.UNICODE)[:12]))
+        return ("SELECT id FROM works WHERE fts_match(title, prompt, tags_text, artist, search_text, ?) ORDER BY fts_score(title, prompt, tags_text, artist, search_text, ?) DESC", [terms, terms])
 
 
 DIALECTS = {d.name: d for d in (Fts5Dialect(), TursoFtsDialect())}
