@@ -28,3 +28,4 @@ progress.hot::-webkit-progress-value{background:#e0a53a}progress.hot::-moz-progr
 .row{display:flex;gap:8px;margin:8px 0}
 .who{margin-top:24px;font-size:12px;opacity:.85}
 .b-ok{background:#d9f5df;color:#17652b}.b-fail{background:#fde0e0;color:#a11}
+main table a { color: #8ab4ff; }

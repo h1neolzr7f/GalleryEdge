@@ -121,7 +121,50 @@ def register(conn, code: str, username: str, password: str) -> None:
     conn.commit()
 
 
-def login(conn, username: str, password: str) -> str:
+def totp_status(conn, username: str) -> bool:
+    r = conn.execute("SELECT enabled FROM user_totp WHERE username=?", (username,)).fetchone()
+    return bool(r and r[0])
+
+
+def totp_setup(conn, username: str) -> dict:
+    """Start (or restart) enrolment; the secret is returned once and only becomes active after totp_enable()."""
+    from . import totp
+    if totp_status(conn, username):
+        raise AuthError("2FA already enabled; disable it first")
+    sec = totp.new_secret()
+    conn.execute("INSERT OR REPLACE INTO user_totp VALUES (?,?,0,-1,?)", (username, sec, _iso(_now())))
+    conn.commit()
+    return {"secret": sec, "otpauth_uri": totp.uri(sec, username)}
+
+
+def _totp_check(conn, username: str, code: str) -> bool:
+    from . import totp
+    r = conn.execute("SELECT secret, last_step FROM user_totp WHERE username=?", (username,)).fetchone()
+    if not r:
+        return False
+    st = totp.verify(r[0], code, last_step=r[1])
+    if st is None:
+        return False
+    conn.execute("UPDATE user_totp SET last_step=? WHERE username=?", (st, username)); conn.commit()
+    return True
+
+
+def totp_enable(conn, username: str, code: str) -> None:
+    if not _totp_check(conn, username, code):
+        raise AuthError("wrong 2FA code")
+    conn.execute("UPDATE user_totp SET enabled=1 WHERE username=?", (username,)); conn.commit()
+    audit(conn, username, "auth.totp_enabled")
+
+
+def totp_disable(conn, username: str, code: str) -> None:
+    if not totp_status(conn, username) or not _totp_check(conn, username, code):
+        raise AuthError("wrong 2FA code")
+    conn.execute("DELETE FROM user_totp WHERE username=?", (username,))
+    conn.execute("DELETE FROM sessions WHERE username=?", (username,)); conn.commit()
+    audit(conn, username, "auth.totp_disabled")
+
+
+def login(conn, username: str, password: str, otp: str | None = None, *, require_totp: bool = False) -> str:
     now = _now()
     fails = conn.execute("SELECT count(*) FROM login_failures WHERE username=? AND ts>?", (username, _iso(now - LOCK_WINDOW))).fetchone()[0]
     if fails >= LOCK_FAILS:
@@ -132,6 +175,16 @@ def login(conn, username: str, password: str) -> str:
         conn.execute("INSERT INTO login_failures VALUES (?,?)", (username, _iso(now))); conn.commit()
         audit(conn, username or "?", "auth.login_failed")
         raise AuthError("wrong username or password")
+    if totp_status(conn, username) or require_totp:
+        if not totp_status(conn, username):
+            audit(conn, username, "auth.login_refused_no_2fa")
+            raise AuthError("2FA (TOTP) must be enabled before remote login; enrol from localhost first")
+        if not otp:
+            raise AuthError("totp_required")
+        if not _totp_check(conn, username, otp):
+            conn.execute("INSERT INTO login_failures VALUES (?,?)", (username, _iso(now))); conn.commit()
+            audit(conn, username, "auth.totp_failed")
+            raise AuthError("wrong 2FA code")
     conn.execute("DELETE FROM login_failures WHERE username=?", (username,))
     token = secrets.token_urlsafe(32)
     conn.execute("INSERT INTO sessions VALUES (?,?,?,?,?)", (_h(token), username, _iso(now), _iso(now + SESSION_TTL), _iso(now)))

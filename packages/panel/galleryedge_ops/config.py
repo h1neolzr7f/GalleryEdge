@@ -46,7 +46,7 @@ def validate(cfg: dict) -> dict:
                 problems.append(f"backends/{b.get('id')}: {b.get('type')} backend needs url")
     for p, val in _walk(cfg):
         leaf = p.rsplit(".", 1)[-1]
-        if SECRETISH.search(leaf) and not leaf.endswith("_ref") and isinstance(val, str) and val:
+        if SECRETISH.search(leaf) and not leaf.endswith(("_ref", "_file")) and isinstance(val, str) and val:
             problems.append(f"{p}: inline secret not allowed, use a vault:<name> reference")
     if problems:
         raise ConfigError(problems)

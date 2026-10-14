@@ -117,3 +117,45 @@ test("users: invite code shown once; selfcheck renders score", async () => {
   render(<SelfcheckView />);
   await screen.findByText("80");
 });
+
+import { LoginView, ContentView, SecurityView } from "../src/App";
+
+test("login asks for TOTP when the server requires it, then sends otp", async () => {
+  const bodies: any[] = [];
+  (globalThis as any).fetch = async (url: string, init?: RequestInit) => {
+    const b = JSON.parse(String(init?.body ?? "{}")); bodies.push(b);
+    if (!b.otp) return new Response(JSON.stringify({ detail: "totp_required" }), { status: 401 });
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  let done = false;
+  render(<LoginView needsSetup={false} onDone={() => { done = true; }} />);
+  fireEvent.change(screen.getByLabelText("用户名"), { target: { value: "dick" } });
+  fireEvent.change(screen.getByLabelText("密码"), { target: { value: "FAKE-pass-123456" } });
+  fireEvent.click(screen.getByText("登录"));
+  const otp = await screen.findByLabelText(/动态码/);
+  fireEvent.change(otp, { target: { value: "123456" } });
+  fireEvent.click(screen.getByText("登录"));
+  await waitFor(() => expect(done).toBe(true));
+  expect(bodies[bodies.length - 1].otp).toBe("123456");
+});
+
+test("content view is read-only and searches", async () => {
+  mockFetch({ "GET /api/content": { configured: true, read_only: true, works: 2, licenses: [["CC0", 2]],
+    recent: [["w1", "FAKE flower", "FAKE", "CC0", "https://x.invalid/1", ""]], search: undefined } });
+  render(<ContentView />);
+  await screen.findByText("FAKE flower");
+  expect(screen.getByText(/只读视图/)).toBeTruthy();
+  expect(screen.queryByText(/删除|编辑/)).toBeNull();
+});
+
+test("2FA enrol flow posts the code to enable", async () => {
+  mockFetch({ "GET /api/auth/totp": { enabled: false }, "POST /api/auth/totp/setup": { secret: "FAKESECRET", otpauth_uri: "otpauth://totp/x" },
+              "POST /api/auth/totp/enable": { ok: true } });
+  render(<SecurityView />);
+  fireEvent.click(await screen.findByText("开始绑定身份验证器"));
+  await screen.findByText("FAKESECRET");
+  fireEvent.change(screen.getByPlaceholderText("6 位动态码"), { target: { value: "654321" } });
+  fireEvent.click(screen.getByText("确认启用"));
+  await waitFor(() => expect(calls.some(c => c.url === "/api/auth/totp/enable")).toBe(true));
+  expect(JSON.parse(String(calls.find(c => c.url === "/api/auth/totp/enable")!.init!.body))).toEqual({ code: "654321" });
+});

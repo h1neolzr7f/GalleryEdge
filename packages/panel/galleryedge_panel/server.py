@@ -68,7 +68,7 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
             user = auth.session_user(conn, request.cookies.get(COOKIE))
             if not user:
                 return JSONResponse({"error": "login required"}, status_code=401)
-            if request.method not in ("GET", "HEAD") and user["role"] != "admin" and path not in ("/api/auth/logout", "/api/auth/password"):
+            if request.method not in ("GET", "HEAD") and user["role"] != "admin" and path not in ("/api/auth/logout", "/api/auth/password", "/api/auth/totp/setup", "/api/auth/totp/enable", "/api/auth/totp/disable"):
                 return JSONResponse({"error": "admin role required"}, status_code=403)
             request.state.user = user
         resp = await call_next(request)
@@ -201,13 +201,53 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
     @app.post("/api/auth/login")
     def do_login(request: Request, body: dict = Body(...)):
         try:
-            token = auth.login(conn, str(body.get("username", "")), str(body.get("password", "")))
+            remote = not _is_loopback(request.client.host if request.client else None)
+            token = auth.login(conn, str(body.get("username", "")), str(body.get("password", "")), body.get("otp") or None,
+                               require_totp=allow_remote and (remote or bool(panel.get("require_totp"))))
         except auth.AuthError as e:
             raise HTTPException(401, str(e))
         resp = JSONResponse({"ok": True, "user": auth.session_user(conn, token)})
         resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=request.url.scheme == "https",
                         max_age=int(auth.SESSION_TTL.total_seconds()), path="/")
         return resp
+
+    @app.get("/api/auth/totp")
+    def totp_state(request: Request):
+        return {"enabled": auth.totp_status(conn, who(request))}
+
+    @app.post("/api/auth/totp/setup")
+    def totp_setup(request: Request):
+        if not _is_loopback(request.client.host if request.client else None):
+            raise HTTPException(403, "2FA enrolment is only allowed from localhost")
+        return auth_call(lambda: auth.totp_setup(conn, who(request)))
+
+    @app.post("/api/auth/totp/enable")
+    def totp_enable(request: Request, body: dict = Body(...)):
+        auth_call(lambda: auth.totp_enable(conn, who(request), str(body.get("code", ""))))
+        return {"ok": True}
+
+    @app.post("/api/auth/totp/disable")
+    def totp_disable(request: Request, body: dict = Body(...)):
+        auth_call(lambda: auth.totp_disable(conn, who(request), str(body.get("code", ""))))
+        return {"ok": True}
+
+    # ---------- staging content (read-only view of the index DB) ----------
+    @app.get("/api/content")
+    def content(q: str = ""):
+        if index_db is None:
+            return {"configured": False}
+        def rows(sql, args=()):
+            r = index_db.execute(sql, list(args)); return [list(x) for x in r.rows]
+        out = {"configured": True, "read_only": True,
+               "works": rows("SELECT count(*) FROM works")[0][0],
+               "licenses": rows("SELECT license, count(*) c FROM works GROUP BY license ORDER BY c DESC LIMIT 12"),
+               "recent": rows("SELECT id, title, author, license, source_url, cover_url FROM works ORDER BY retrieved_at DESC LIMIT 24")}
+        if q.strip():
+            from galleryedge_db.text import fts5_query
+            fq = fts5_query(q)
+            out["search"] = rows("SELECT w.id, w.title, w.author, w.license, w.source_url, w.cover_url FROM works_fts f JOIN works w ON w.rowid=f.rowid "
+                                 "WHERE works_fts MATCH ? LIMIT 24", [fq]) if fq else []
+        return out
 
     @app.post("/api/auth/register")
     def do_register(body: dict = Body(...)):

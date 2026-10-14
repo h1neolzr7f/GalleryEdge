@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, fmtBytes } from "./api";
 
-type Tab = "status" | "packs" | "storage" | "alerts" | "cleanup" | "events" | "config" | "users" | "releases" | "selfcheck";
+type Tab = "status" | "packs" | "storage" | "alerts" | "cleanup" | "events" | "config" | "users" | "releases" | "selfcheck" | "content" | "security";
 const TABS: [Tab, string][] = [["status", "状态"], ["packs", "包任务"], ["storage", "存储与成本"], ["alerts", "告警"], ["cleanup", "清理"], ["events", "事件日志"],
-  ["config", "配置中心"], ["users", "用户"], ["releases", "发布"], ["selfcheck", "安全自检"]];
+  ["config", "配置中心"], ["users", "用户"], ["releases", "发布"], ["selfcheck", "安全自检"], ["content", "站点内容"], ["security", "两步验证"]];
 
 function useLoad<T>(path: string, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -189,15 +189,19 @@ export function StorageView() {
 
 export function LoginView({ needsSetup, onDone }: { needsSetup: boolean; onDone: () => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
-  const [f, setF] = useState({ username: "", password: "", code: "" });
+  const [f, setF] = useState({ username: "", password: "", code: "", otp: "" });
+  const [needOtp, setNeedOtp] = useState(false);
   const [err, setErr] = useState("");
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr("");
     try {
       if (mode === "register") await api("/api/auth/register", { method: "POST", body: f });
-      await api("/api/auth/login", { method: "POST", body: { username: f.username, password: f.password } });
+      await api("/api/auth/login", { method: "POST", body: { username: f.username, password: f.password, otp: f.otp || undefined } });
       onDone();
-    } catch (x: any) { setErr(x.message); }
+    } catch (x: any) {
+      if (String(x.message).includes("totp_required")) { setNeedOtp(true); setErr("请输入身份验证器中的 6 位动态码"); }
+      else setErr(x.message);
+    }
   };
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   return (<div className="login"><form onSubmit={submit}>
@@ -205,6 +209,7 @@ export function LoginView({ needsSetup, onDone }: { needsSetup: boolean; onDone:
     {needsSetup && <p className="warn-box">还没有账号。请在终端运行 <code>ge-panel --config config.json admin create &lt;用户名&gt;</code> 创建管理员。</p>}
     <label>用户名<input value={f.username} onChange={set("username")} autoComplete="username" /></label>
     <label>密码<input type="password" value={f.password} onChange={set("password")} autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
+    {needOtp && <label>动态码（TOTP）<input value={f.otp} onChange={set("otp")} inputMode="numeric" autoComplete="one-time-code" maxLength={6} /></label>}
     {mode === "register" && <label>邀请码<input value={f.code} onChange={set("code")} /></label>}
     {err && <p className="err">{err}</p>}
     <button type="submit">{mode === "login" ? "登录" : "用邀请码注册"}</button>
@@ -314,6 +319,43 @@ export function SelfcheckView() {
   </div>);
 }
 
+export function ContentView() {
+  const [q, setQ] = useState(""); const [path, setPath] = useState("/api/content");
+  const { data, err } = useLoad<any>(path, [path]);
+  if (err) return <p className="err">{err}</p>;
+  if (!data) return <p>加载中…</p>;
+  if (!data.configured) return <p className="warn-box">未配置内容库（config: database.index + index_token_ref）。</p>;
+  const rows = data.search ?? data.recent;
+  return (<div>
+    <p className="meta">只读视图：直接读取站点内容库（只读 token），面板不会写入。</p>
+    <div className="cards"><div className="kpi"><b>{data.works}</b><span>作品</span></div>
+      {data.licenses.slice(0, 4).map((l: any) => <div className="kpi" key={l[0]}><b>{l[1]}</b><span>{l[0]}</span></div>)}</div>
+    <form className="row" onSubmit={e => { e.preventDefault(); setPath(`/api/content?q=${encodeURIComponent(q)}`); }}>
+      <input placeholder="搜索（中文/英文）" value={q} onChange={e => setQ(e.target.value)} /><button type="submit">搜索</button></form>
+    <table><thead><tr><th></th><th>标题</th><th>作者</th><th>许可</th></tr></thead><tbody>
+      {rows.map((r: any) => <tr key={r[0]}><td>{r[5] && <img src={r[5]} alt="" width={64} loading="lazy" referrerPolicy="no-referrer" />}</td>
+        <td><a href={r[4]} target="_blank" rel="noreferrer">{r[1]}</a></td><td>{r[2]}</td><td>{r[3]}</td></tr>)}
+    </tbody></table>
+  </div>);
+}
+
+export function SecurityView() {
+  const { data, reload } = useLoad<any>("/api/auth/totp");
+  const [setup, setSetup] = useState<any>(null); const [code, setCode] = useState(""); const [msg, setMsg] = useState("");
+  if (!data) return <p>加载中…</p>;
+  const start = async () => { try { setSetup(await api<any>("/api/auth/totp/setup", { method: "POST" })); setMsg(""); } catch (e: any) { setMsg(e.message); } };
+  const act = async (what: string) => { try { await api(`/api/auth/totp/${what}`, { method: "POST", body: { code } }); setSetup(null); setCode(""); setMsg(what === "enable" ? "两步验证已启用" : "两步验证已关闭"); reload(); } catch (e: any) { setMsg(e.message); } };
+  return (<div>
+    <p>状态：{data.enabled ? <Badge v="up" /> : <Badge v="down" />} {data.enabled ? "已启用" : "未启用"}</p>
+    <p className="meta">远程模式（panel.allow_remote）下，未启用两步验证的账号无法从非本机登录；启用/重置只能在本机进行。</p>
+    {!data.enabled && !setup && <button onClick={start}>开始绑定身份验证器</button>}
+    {setup && <div className="warn-box">在身份验证器中添加（只显示这一次）：<br /><code>{setup.secret}</code><br /><code className="meta">{setup.otpauth_uri}</code></div>}
+    {(setup || data.enabled) && <div className="row"><input placeholder="6 位动态码" value={code} onChange={e => setCode(e.target.value)} maxLength={6} />
+      {setup ? <button onClick={() => act("enable")}>确认启用</button> : <button className="danger" onClick={() => act("disable")}>关闭两步验证</button>}</div>}
+    {msg && <p className="meta">{msg}</p>}
+  </div>);
+}
+
 export function App() {
   const [auth, setAuth] = useState<any>(null);
   const check = useCallback(() => { api("/api/auth/state").then(setAuth).catch(() => setAuth({ user: null, needs_setup: false })); }, []);
@@ -327,7 +369,7 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>(() => (location.hash.slice(1) as Tab) || "status");
   useEffect(() => { location.hash = tab; }, [tab]);
   const View = { status: StatusView, packs: PacksView, storage: StorageView, alerts: AlertsView, cleanup: CleanupView, events: EventsView,
-    config: ConfigView, users: UsersView, releases: ReleasesView, selfcheck: SelfcheckView }[tab] ?? StatusView;
+    config: ConfigView, users: UsersView, releases: ReleasesView, selfcheck: SelfcheckView, content: ContentView, security: SecurityView }[tab] ?? StatusView;
   return (<div className="app">
     <aside><h1>GalleryEdge<small>运维面板 · 仅本机</small></h1>
       <nav>{TABS.map(([k, label]) => <button key={k} className={k === tab ? "on" : ""} onClick={() => setTab(k)}>{label}</button>)}</nav>
