@@ -42,3 +42,19 @@ describe("cover proxy (read-only image origin)", () => {
     expect(r.headers.get("Content-Type")).toBe("image/svg+xml");
   });
 });
+
+import { coverSrc } from "../src/index";
+describe("attribution + hotlink", () => {
+  it("only hotlinks Commons thumbnails", () => {
+    expect(coverSrc({ id: "a", cover_url: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/X.jpg/500px-X.jpg" })).toMatch(/^https:\/\/upload/);
+    expect(coverSrc({ id: "a", cover_url: "https://evil.example/x.jpg" })).toBe("/cover/a.svg");
+  });
+  it("work page shows author, license link and attribution", () => {
+    const html = new Site({} as any).workPage({ id: "wmc-x", title: "T", artist: "Ann", license: "CC BY 4.0", license_url: "https://creativecommons.org/licenses/by/4.0",
+      source_url: "https://commons.wikimedia.org/wiki/File:X.jpg", attribution: "“T” by Ann, CC BY 4.0, via Wikimedia Commons", tags: [], prompt: "d",
+      cover_url: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/X.jpg/500px-X.jpg" });
+    expect(html).toContain('rel="license noopener"');
+    expect(html).toContain("署名 Attribution");
+    expect(html).toContain("via Wikimedia Commons");
+  });
+});

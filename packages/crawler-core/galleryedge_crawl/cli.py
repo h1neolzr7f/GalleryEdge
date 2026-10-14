@@ -25,6 +25,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.adapter == "synthetic":
         adapter, fetcher, hosts = ADAPTERS["synthetic"](), SyntheticFetcher(), ["demo-source.invalid"]
+    elif a.adapter == "wikimedia-commons":
+        if a.min_interval < 1.0:
+            ap.error("wikimedia-commons: --min-interval must be >= 1.0 (Wikimedia etiquette)")
+        adapter, fetcher, hosts = ADAPTERS["wikimedia-commons"](), None, ["commons.wikimedia.org"]
     else:
         adapter, fetcher, hosts = ADAPTERS["demo-selfhost"](a.base), None, [urlsplit(a.base).netloc]
     cfg = CrawlConfig(contact=a.contact, allowed_hosts=hosts, min_interval_s=a.min_interval, max_pages=a.max_pages,

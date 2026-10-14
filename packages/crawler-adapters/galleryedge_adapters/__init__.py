@@ -1,4 +1,4 @@
-"""Public demo adapters only. Real-site adapters are intentionally not shipped."""
+"""Demo adapters plus one openly-licensed real source (Wikimedia Commons, SFW allow-list; see commons.py)."""
 from __future__ import annotations
 
 import json
@@ -70,4 +70,6 @@ class SyntheticFetcher:
         return Response(url, 200, {"Content-Type": "text/html"}, f"<synthetic {url}>".encode())
 
 
-ADAPTERS = {"demo-selfhost": DemoSelfhostAdapter, "synthetic": SyntheticAdapter}
+from .commons import CommonsAdapter  # noqa: E402
+
+ADAPTERS = {"demo-selfhost": DemoSelfhostAdapter, "synthetic": SyntheticAdapter, "wikimedia-commons": CommonsAdapter}

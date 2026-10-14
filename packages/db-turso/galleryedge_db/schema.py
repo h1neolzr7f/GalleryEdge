@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS works(
   id TEXT PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '', source_url TEXT NOT NULL,
   license TEXT NOT NULL, rights_note TEXT, rating TEXT NOT NULL, artist TEXT, tags_text TEXT NOT NULL DEFAULT '',
   image_count INTEGER NOT NULL DEFAULT 1, cover_key TEXT, created_at TEXT, retrieved_at TEXT, pack_id TEXT,
-  synthetic INTEGER NOT NULL DEFAULT 0, search_text TEXT NOT NULL DEFAULT '');
+  synthetic INTEGER NOT NULL DEFAULT 0, search_text TEXT NOT NULL DEFAULT '',
+  author TEXT, license_url TEXT, attribution TEXT, cover_url TEXT);
 CREATE TABLE IF NOT EXISTS work_tags(work_id TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY(work_id, tag));
 CREATE INDEX IF NOT EXISTS idx_work_tags_tag ON work_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_works_artist ON works(artist);
@@ -45,11 +46,12 @@ def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None 
                     raise ValueError(f"work {w.get('id')!r} missing required field {k}")
             items.append(("DELETE FROM works WHERE id=?", (w["id"],)))
             items.append(("DELETE FROM work_tags WHERE work_id=?", (w["id"],)))
-            items.append(("INSERT INTO works(id,title,prompt,source_url,license,rights_note,rating,artist,tags_text,image_count,cover_key,created_at,retrieved_at,pack_id,synthetic,search_text)"
-                          " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            items.append(("INSERT INTO works(id,title,prompt,source_url,license,rights_note,rating,artist,tags_text,image_count,cover_key,created_at,retrieved_at,pack_id,synthetic,search_text,author,license_url,attribution,cover_url)"
+                          " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                           (w["id"], w["title"], w.get("prompt", ""), w["source_url"], w["license"], w.get("rights_note"), w["rating"],
                            w.get("artist"), " ".join(w.get("tags", [])), w.get("image_count", 1), w.get("cover_key"),
-                           w.get("created_at"), w.get("retrieved_at"), w.get("pack_id"), int(bool(w.get("synthetic"))), search_text(w))))
+                           w.get("created_at"), w.get("retrieved_at"), w.get("pack_id"), int(bool(w.get("synthetic"))), search_text(w),
+                           w.get("author"), w.get("license_url"), w.get("attribution"), w.get("cover_url"))))
             for t in w.get("tags", []):
                 items.append(("INSERT OR IGNORE INTO work_tags VALUES (?,?)", (w["id"], t)))
         res = client.batch(items)

@@ -27,12 +27,15 @@ main{padding:20px 24px}.grid{display:grid;grid-template-columns:repeat(auto-fill
 .meta{color:#8a93a6;font-size:12px}.banner{background:#2a2414;color:#e8d29a;padding:6px 24px;font-size:13px}
 pre{white-space:pre-wrap;background:#161a22;border:1px solid #262c38;padding:12px;border-radius:8px}.pager{margin:20px 0;display:flex;gap:12px}`;
 
+/** Only hotlink thumbnails from hosts whose policy allows it (with attribution). */
+export const coverSrc = (w: any) => /^https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\/thumb\//.test(String(w.cover_url ?? "")) ? String(w.cover_url) : `/cover/${w.id}.svg`;
+
 export const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#x27;" }[c]!));
 const qs = (o: Record<string, string | number | undefined>) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString();
 
 const SEC_HEADERS = {
   "X-Content-Type-Options": "nosniff",
-  "Content-Security-Policy": "default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+  "Content-Security-Policy": "default-src 'self'; img-src 'self' https://upload.wikimedia.org; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
   "Referrer-Policy": "no-referrer",
 };
 const resp = (status: number, type: string, body: string, extra: Record<string, string> = {}) =>
@@ -68,7 +71,7 @@ export class Site {
     const w = where.length ? " WHERE " + where.join(" AND ") : "";
     page = Math.max(1, page);
     const total = Number((await this.db.execute(`SELECT count(*) FROM works w${w}`, args)).rows[0][0]);
-    const items = rowsToDicts(await this.db.execute(`SELECT w.id,w.title,w.artist,w.tags_text,w.license,w.image_count FROM works w${w} ORDER BY w.created_at DESC, w.id LIMIT ? OFFSET ?`, [...args, PAGE, (page - 1) * PAGE]))
+    const items = rowsToDicts(await this.db.execute(`SELECT w.id,w.title,w.artist,w.tags_text,w.license,w.image_count,w.cover_url FROM works w${w} ORDER BY w.created_at DESC, w.id LIMIT ? OFFSET ?`, [...args, PAGE, (page - 1) * PAGE]))
       .map(({ tags_text, ...r }) => ({ ...r, tags: String(tags_text).split(" ").filter(Boolean) }));
     return { total, page, page_size: PAGE, items };
   }
@@ -136,7 +139,7 @@ export class Site {
 
   async index(q: string, tag: string, artist: string, page: number): Promise<string> {
     const res = await this.search(q, tag, artist, page);
-    const cards = res.items.map((w: any) => `<a class="card" href="/work/${esc(w.id)}"><img src="/cover/${esc(w.id)}.svg" alt="" loading="lazy"><div class="b"><h3>${esc(w.title)}</h3><div class="meta">${esc(w.artist)} · ${esc(w.license)} · ${w.image_count} 张</div>${w.tags.map((t: string) => `<span class="tag">${esc(t)}</span>`).join("")}</div></a>`).join("");
+    const cards = res.items.map((w: any) => `<a class="card" href="/work/${esc(w.id)}"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" loading="lazy" referrerpolicy="no-referrer"><div class="b"><h3>${esc(w.title)}</h3><div class="meta">${esc(w.artist)} · ${esc(w.license)} · ${w.image_count} 张</div>${w.tags.map((t: string) => `<span class="tag">${esc(t)}</span>`).join("")}</div></a>`).join("");
     const filt = [tag ? `标签 tag: <b>${esc(tag)}</b>` : "", artist ? `画师 artist: <b>${esc(artist)}</b>` : ""].filter(Boolean).join(" · ");
     const tagbar = (await this.tags()).slice(0, 20).map((t: any) => `<a class="tag" href="/?${qs({ tag: t.tag })}">${esc(t.tag)} ${t.n}</a>`).join(" ");
     const pages = Math.max(1, Math.ceil(res.total / PAGE));
@@ -147,7 +150,7 @@ export class Site {
 
   workPage(w: any): string {
     const tags = w.tags.map((t: string) => `<a class="tag" href="/?${qs({ tag: t })}">${esc(t)}</a>`).join("");
-    return this.layout(String(w.title), `<main style="max-width:900px"><img src="/cover/${esc(w.id)}.svg" alt="" style="width:100%;max-width:480px;border-radius:12px"><h2>${esc(w.title)}</h2><p class="meta">画师 <a href="/?${qs({ artist: w.artist ?? "" })}">${esc(w.artist)}</a> · 许可 ${esc(w.license)} · 来源 <a href="${esc(w.source_url)}" rel="nofollow noopener">${esc(w.source_url)}</a></p><p>${tags}</p><h3>提示词 Prompt</h3><pre id="prompt">${esc(w.prompt)}</pre><button id="copy" onclick="navigator.clipboard.writeText(document.getElementById('prompt').innerText).then(()=>this.textContent='已复制 ✓')">复制提示词 Copy</button></main>`);
+    return this.layout(String(w.title), `<main style="max-width:900px"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" referrerpolicy="no-referrer" style="width:100%;max-width:480px;border-radius:12px"><h2>${esc(w.title)}</h2><p class="meta">作者 <a href="/?${qs({ artist: w.artist ?? "" })}">${esc(w.artist)}</a> · 许可 ${w.license_url ? `<a href="${esc(w.license_url)}" rel="license noopener">${esc(w.license)}</a>` : esc(w.license)} · 来源 <a href="${esc(w.source_url)}" rel="nofollow noopener">${esc(w.source_url)}</a></p>${w.attribution ? `<p class="attribution" id="attribution">署名 Attribution：${esc(w.attribution)}</p>` : ""}<p>${tags}</p><h3>${w.attribution ? "描述 Description" : "提示词 Prompt"}</h3><pre id="prompt">${esc(w.prompt)}</pre><button id="copy" onclick="navigator.clipboard.writeText(document.getElementById('prompt').innerText).then(()=>this.textContent='已复制 ✓')">复制提示词 Copy</button></main>`);
   }
 }
 

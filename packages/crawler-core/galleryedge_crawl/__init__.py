@@ -218,8 +218,16 @@ class Crawler:
         rp = self.robots[host]
         delay = (rp.crawl_delay(self.fetcher.ua if hasattr(self.fetcher, "ua") else "*") or 0) if rp else 0
         for _ in range(self.cfg.max_redirects + 1):
-            self._wait(host, float(delay))
-            r = self.fetcher.get(url)
+            r = None
+            for attempt in range(2):  # one polite retry on network errors, then skip
+                self._wait(host, float(delay) + 5.0 * attempt)
+                try:
+                    r = self.fetcher.get(url)
+                    break
+                except (OSError, ValueError):
+                    r = None
+            if r is None:
+                return Skip("network-error")
             self.stats["fetched"] += 1
             if r.status in (301, 302, 303, 307, 308):
                 loc = urljoin(url, r.headers.get("Location", r.headers.get("location", "")))

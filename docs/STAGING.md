@@ -22,3 +22,17 @@ GE_LIBSQL_TOKEN=$(cat token) ge-ingest --db libsql://<db> --table-prefix ge_ --p
 2. 新建一个专用 Turso 库（需要 Turso 平台登录），做一次全量导入，在 staging 上并行验证一周。
 3. 给现网 Worker 加功能开关，或者把路由切到新 Worker。旧 Worker 保留不删，可以一键切回。
 4. 回滚：路由切回旧 Worker，现网库原样不动。
+
+## Phase 7c — 合规内容源：Wikimedia Commons
+用户决定：staging 不再展示 aitag 原图（已下线：服务绑定已解除，`ge_*` 表已删除，原有表核对未改动）。
+
+- 适配器 `wikimedia-commons`（`packages/crawler-adapters/galleryedge_adapters/commons.py`）：
+  - 只抓 SFW 白名单分类（风景、山、水体、森林、海岸、火山、洞穴、花园、公园、岛屿、中国、日本、台湾、香港、鸟、花、灯塔、桥）里的精选图片，不递归进子分类。
+  - 许可只收 CC0、公有领域、CC BY、CC BY-SA；NC、ND、仅 GFDL 和非自由文件一律跳过。
+  - 文件名、描述或分类里出现敏感词就跳过（`sfw-blocked`）。
+  - **robots**：Commons 的 robots.txt 对通用爬虫禁止 `/w/`（包括 `api.php`），所以只读 robots 允许的 `/wiki/Category:` 和 `/wiki/File:` 页面。速率每秒不超过 1 次，UA 带联系方式；网络错误重试一次后跳过。
+  - 每条记录带作者、许可、许可链接、来源 URL、署名文本；英文分类会补少量中文标签（词表），并在 rights_note 里注明。
+- 图片：不下载、不进 R2，按 Commons 的政策热链 500px 缩略图（`upload.wikimedia.org`），作品页显示署名和许可链接。CSP 只额外放行这一个域名。
+```bash
+ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./packs --max-pages 1750
+```

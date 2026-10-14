@@ -68,7 +68,7 @@ class App:
         w = (" WHERE " + " AND ".join(where)) if where else ""
         total = self.db.execute(f"SELECT count(*) FROM works w{w}", args).rows[0][0]
         page = max(1, page)
-        rows = self.db.execute(f"SELECT w.id,w.title,w.artist,w.tags_text,w.license,w.image_count FROM works w{w} ORDER BY w.created_at DESC, w.id LIMIT ? OFFSET ?",
+        rows = self.db.execute(f"SELECT w.id,w.title,w.artist,w.tags_text,w.license,w.image_count,w.cover_url FROM works w{w} ORDER BY w.created_at DESC, w.id LIMIT ? OFFSET ?",
                                [*args, PAGE, (page - 1) * PAGE]).dicts()
         for r in rows:
             r["tags"] = r.pop("tags_text").split()
