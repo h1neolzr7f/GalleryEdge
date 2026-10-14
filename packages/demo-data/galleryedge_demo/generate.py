@@ -16,6 +16,7 @@ LICENSES = ["CC0-1.0", "CC-BY-4.0", "synthetic"]
 def make_work(i: int, rng: random.Random, base: datetime) -> dict:
     title = f"{rng.choice(ADJ)} {rng.choice(NOUN)} #{i}"
     wid = f"demo-{i:06d}"
+    tags = sorted(rng.sample(TAGS, rng.randint(1, 4)))
     return {
         "id": wid,
         "title": title,
@@ -24,7 +25,8 @@ def make_work(i: int, rng: random.Random, base: datetime) -> dict:
         "rights_note": "synthetic demo record",
         "rating": "general",
         "artist": f"demo-artist-{rng.randint(1, 20):02d}",
-        "tags": sorted(rng.sample(TAGS, rng.randint(1, 4))),
+        "tags": tags,
+        "prompt": ", ".join([title.split(" #")[0], *tags, "synthetic demo"]),
         "image_count": rng.randint(1, 4),
         "cover_key": f"demo/{wid}/cover.png",
         "created_at": (base - timedelta(days=rng.randint(0, 365))).isoformat(),

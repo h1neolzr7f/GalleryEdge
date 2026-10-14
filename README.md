@@ -29,6 +29,22 @@ export GE_VAULT_PASSPHRASE='choose-a-long-passphrase'
 ge-ops --config config.json health
 ```
 
+### 演示站（Phase 2，约 10 分钟跑通）
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e .
+ge-demo seed -n 500            # 生成 500 条合成作品，写入 ./var/demo.db（FTS5 全文检索）
+ge-demo serve                  # 打开 http://127.0.0.1:8787
+ge-demo key > my.key           # 生成 API Key（只显示一次，库里只存哈希）
+curl -H "X-API-Key: $(cat my.key)" "http://127.0.0.1:8787/api/v1/search?q=harbor&tag=night"
+```
+想走 Turso/libSQL 路径：本机起一个 `sqld --http-listen-addr 127.0.0.1:8080`（或 `docker run -p 8080:8080 ghcr.io/tursodatabase/libsql-server`），再用 `ge-demo --db http://127.0.0.1:8080 seed` / `serve`。真实 Turso 用 `--db libsql://<库>.turso.io`，令牌放环境变量 `GE_LIBSQL_TOKEN`，不要写在命令行里。
+
+页面：作品卡片、标签/画师筛选、全文检索、作品页一键复制提示词。API：`/api/v1/search?q=&tag=&artist=&page=`、`/api/v1/works/<id>`、`/api/v1/tags`，按 Key 计每分钟/每日额度，超额返回 429 + `Retry-After`。
+
+![首页](docs/screenshots/galleryedge-home.png)
+![作品页](docs/screenshots/galleryedge-work.png)
+
 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)，架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
@@ -37,7 +53,7 @@ ge-ops --config config.json health
 
 A **self-use** edge work index plus a one-person ops toolkit: health checks, alerts, encrypted credentials, backup/restore, safe cleanup, audit log and a validated config center. Primary DB is **Turso (libSQL)**; D1 is optional. The repo ships **synthetic data only** and contains **no account auto-registration** of any kind (see [Compliance](docs/COMPLIANCE.md)).
 
-Phase 1 commands are listed in the table above (`ge-ops ...`). Quick start:
+Demo site: `pip install -e . && ge-demo seed && ge-demo serve` → http://127.0.0.1:8787 (synthetic data, FTS5 on SQLite or libSQL/`sqld`/Turso via `--db`). Phase 1 commands are listed in the table above (`ge-ops ...`). Quick start:
 
 ```bash
 pip install -e ".[dev]" && pytest -q

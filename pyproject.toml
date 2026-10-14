@@ -13,6 +13,7 @@ dev = ["pytest>=7"]
 [project.scripts]
 ge-ops = "galleryedge_ops.cli:main"
 ge-demo-data = "galleryedge_demo.generate:main"
+ge-demo = "galleryedge_edge.demo:main"
 
 [build-system]
 requires = ["setuptools>=68"]
