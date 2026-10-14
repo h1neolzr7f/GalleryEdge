@@ -1,4 +1,5 @@
 """Wikimedia Commons adapter: synthetic HTML fixtures shaped like Commons pages (no real content)."""
+import re
 import pytest
 from galleryedge_adapters.commons import CommonsAdapter, thumb_url
 from galleryedge_crawl import CrawlConfig, Crawler, Link, Record, Response, Skip
@@ -114,7 +115,7 @@ def test_retry_after_backoff_then_success(tmp_path):
                  fetcher=F(), clock=lambda: t[0], sleep=lambda s: (waits.append(s), t.__setitem__(0, t[0] + s)),
                  on_event=lambda *a: ev.append(a[1]))
     st = cr.run()
-    assert len(calls) == 3 and st["backoffs"] == 2 and "crawler.backoff" in ev and st["skip_reasons"] == {}
+    assert len(calls) == 3 and st["backoffs"] == 2 and "crawler.backoff" in ev and st["skip_reasons"] == {"empty-category": 1}
     assert sum(waits) >= 14
 
 
@@ -186,3 +187,36 @@ def test_templatestyles_css_never_leaks():
     from galleryedge_adapters.commons import _txt, clean_author
     assert _txt('<style>.mw-parser-output .x{color:red}</style><b>FAKE Name</b>') == "FAKE Name"
     assert clean_author("FAKE Studio. Restored by .mw-parser-output .commons-creator-ta") == "FAKE Studio. Restored by"
+
+
+@pytest.mark.parametrize("cats,desc", [(("Flags of FAKE land",), "x"), (("Coats of arms of FAKE",), "x"), (("Maps of FAKE",), "x"),
+                                       (("FAKE protests",), "x"), (("Military parades",), "x"), ((), "FAKE president speaking"),
+                                       (("Landscapes of China",), "x"), ((), "国旗"), (("Churches in FAKE",), "x")])
+def test_sensitive_blocked(cats, desc):
+    assert parse(page(cats=cats, desc=desc)) == [Skip("sensitive-blocked")]
+
+
+def test_sensitive_offline_recheck_and_neutral_categories():
+    from galleryedge_adapters.commons import SFW_CATEGORIES, sfw_ok
+    assert not sfw_ok({"title": "Flag of FAKE", "tags": []}) and not sfw_ok({"title": "x", "tags": ["中国"]})
+    assert sfw_ok({"title": "FAKE autumn forest", "tags": ["森林"]})
+    assert not any(re.search(r"China|Japan|Taiwan|Hong_Kong", c) for c in SFW_CATEGORIES)
+
+
+def test_empty_category_is_reported():
+    out = list(CommonsAdapter().parse(Response(B + "/wiki/Category:Featured_pictures_of_cats", 200, {}, b"<p>no files</p>")))
+    assert out == [Skip("empty-category")]
+
+
+def test_llama_not_lama():
+    from galleryedge_adapters.commons import SENSITIVE
+    assert not SENSITIVE.search("FAKE llama in the hills") and SENSITIVE.search("FAKE lama prays")
+
+
+def test_cli_categories(capsys):
+    from galleryedge_crawl.cli import main
+    assert main(["--adapter", "wikimedia-commons", "--list-categories"]) == 0
+    assert "Featured_pictures_of_cats" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        main(["--adapter", "wikimedia-commons", "--contact", "a@b.c", "--categories", "Flags_of_everything"])
+    assert "--list-categories" in capsys.readouterr().err

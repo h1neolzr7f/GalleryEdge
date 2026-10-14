@@ -33,6 +33,21 @@ def init(client, dialect) -> None:
     client.execute("INSERT OR REPLACE INTO meta VALUES ('fts_dialect', ?)", [dialect.name])
 
 
+def rebuild_fts(client, dialect) -> int:
+    """Drop and recreate the FTS index + triggers from the current DDL, then re-index all rows.
+    Used to migrate an existing DB when the FTS definition changes (the works table is untouched)."""
+    if dialect.name != "fts5":
+        raise ValueError("rebuild_fts supports the fts5 dialect only")
+    for t in ("works_ai", "works_ad", "works_au"):
+        client.execute(f"DROP TRIGGER IF EXISTS {t}")
+    client.execute("DROP TABLE IF EXISTS works_fts")
+    for s in split_sql(dialect.ddl()):
+        if s.strip():
+            client.execute(s.strip())
+    client.execute("INSERT INTO works_fts(works_fts) VALUES ('rebuild')")
+    return client.execute("SELECT count(*) FROM works_fts").rows[0][0]
+
+
 def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None = None) -> int:
     """Upsert works in transactional batches (one pipeline round-trip per batch).
     ``stats`` (optional) accumulates rows_written / rows_read as reported by the server
