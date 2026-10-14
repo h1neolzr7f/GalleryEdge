@@ -157,3 +157,20 @@ def test_pack_contract_rejects_tampering_and_bad_records(tmp_path):
     with pytest.raises(PackError, match="checksum"):
         read_pack(bad)
     assert not list(tmp_path.glob("*.partial"))
+
+
+def test_crawler_events_reach_panel_status(source, tmp_path):
+    from fastapi.testclient import TestClient
+    from galleryedge_ops import db as pdb
+    from galleryedge_ops.events import emit
+    from galleryedge_panel.server import create_app
+    app, base = source
+    conn = pdb.connect(":memory:"); pdb.migrate(conn)
+    ev = lambda level, code, msg, payload: emit(conn, "crawler", level, code, msg, payload)  # noqa: E731
+    Crawler(DemoSelfhostAdapter(base), cfg(base), state_path=str(tmp_path / "s.db"), out_dir=str(tmp_path / "p"), on_event=ev, heartbeat_every=10).run()
+    codes = [c for (c,) in conn.execute("SELECT code FROM events WHERE source='crawler' ORDER BY id")]
+    assert codes[0] == "crawler.start" and "crawler.heartbeat" in codes and codes[-2:] == ["crawler.skips", "crawler.done"]
+    c = {"panel": {"bind": "127.0.0.1"}, "alerts": {}, "backends": [], "cleanup": {"roots": []}}
+    st = TestClient(create_app(c, conn)).get("/api/status").json()["crawler"]
+    assert st["last_code"] == "crawler.done" and st["stats"]["records"] == 45
+    assert st["skip_reasons"] == {"login-wall": 2, "no-license": 1, "paywall": 1, "robots-disallow": 1}

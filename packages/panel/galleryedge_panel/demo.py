@@ -16,6 +16,10 @@ def seed(conn) -> None:
     for src, lvl, code, msg in [("crawler", "info", "crawler.heartbeat", "demo crawler alive"), ("ingest", "error", "pack.error", "demo-pack-0005 failed at verify"),
                                 ("edge", "info", "edge.probe", "worker /healthz ok"), ("agent", "warn", "disk.high", "local disk 81% used (synthetic)")]:
         emit(conn, src, lvl, code, msg)
+    emit(conn, "crawler", "info", "crawler.skips", "demo-selfhost skipped: login-wall=2, no-license=1, paywall=1, robots-disallow=1",
+         {"adapter": "demo-selfhost", "reasons": {"login-wall": 2, "no-license": 1, "paywall": 1, "robots-disallow": 1}})
+    emit(conn, "crawler", "info", "crawler.done", "demo-selfhost done: 60 records, 1 packs",
+         {"adapter": "demo-selfhost", "fetched": 67, "records": 60, "skipped": 5, "dupes": 0, "pages_total": 64, "packs": 1})
     A = Alerter(conn)
     A.fire("backend.down.local-cold", "error", "后端 local-cold 不可用 / backend down: path missing (synthetic)")
     A.fire("credential.expiring.demo-r2", "warn", "凭据 demo-r2 5 天后到期，请轮换 (synthetic)")
