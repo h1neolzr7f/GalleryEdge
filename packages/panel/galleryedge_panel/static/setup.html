@@ -1,0 +1,97 @@
+<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>GalleryEdge 首次安装</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f1419;color:#e7ecf3;margin:0;padding:2rem;line-height:1.5}
+.card{max-width:560px;margin:0 auto;background:#1a2332;border-radius:12px;padding:1.5rem 1.75rem;box-shadow:0 8px 32px #0006}
+h1{margin:0 0 .25rem;font-size:1.4rem} .sub{color:#8b9bb4;margin:0 0 1.25rem;font-size:.9rem}
+label{display:block;margin:.75rem 0 .25rem;font-size:.85rem;color:#b6c2d6}
+input{width:100%;box-sizing:border-box;padding:.55rem .7rem;border-radius:8px;border:1px solid #2a3a52;background:#0f1419;color:#e7ecf3}
+button{margin-top:1.25rem;width:100%;padding:.7rem;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+.err{color:#f87171;margin-top:.75rem}.ok{color:#4ade80;margin-top:.75rem;white-space:pre-wrap}
+.steps{display:flex;gap:.4rem;margin-bottom:1rem}.steps span{flex:1;height:4px;background:#2a3a52;border-radius:2px}.steps span.on{background:#3b82f6}
+.tip{font-size:.8rem;color:#8b9bb4;margin-top:.35rem}
+code{background:#0f1419;padding:.1rem .35rem;border-radius:4px}
+</style>
+<body><div class=card>
+<div class=steps id=bar></div>
+<h1 id=title>欢迎</h1><p class=sub id=sub></p>
+<form id=f>
+<div id=body></div>
+<p class=err id=err></p><p class=ok id=ok></p>
+<button type=submit id=btn>下一步</button>
+</form></div>
+<script>
+const S=[
+  {id:'welcome',t:'欢迎使用 GalleryEdge',s:'三分钟完成安装。全程只需本机浏览器，不用敲命令。'},
+  {id:'admin',t:'创建管理员',s:'这个账号用来登录运维面板。密码至少 12 位，不能包含用户名。'},
+  {id:'vault',t:'保险库口令',s:'用来加密保存各种密钥。会写到本机仅自己可读的文件，面板不会显示。'},
+  {id:'turso',t:'内容库（可选）',s:'如果已有 Turso 测试库，填 token 文件路径；没有可跳过，稍后再配。'},
+  {id:'finish',t:'确认并安装',s:'检查无误后点「开始安装」。'}
+];
+let i=0;
+const d={root:'',username:'dick',password:'',vault_passphrase:'',port:8790,turso_token_file:'',turso_url:''};
+const bar=document.getElementById('bar'), title=document.getElementById('title'), sub=document.getElementById('sub');
+const body=document.getElementById('body'), err=document.getElementById('err'), ok=document.getElementById('ok'), btn=document.getElementById('btn');
+
+fetch('/api/setup/defaults',{headers:{'X-GE-Panel':'1'}}).then(r=>r.json()).then(x=>{
+  d.root=x.root; d.port=x.suggested_port; render();
+}).catch(e=>{ err.textContent='无法加载向导：'+e; });
+
+function render(){
+  bar.innerHTML=S.map((_,k)=>'<span class="'+(k<=i?'on':'')+'"></span>').join('');
+  title.textContent=S[i].t; sub.textContent=S[i].s; err.textContent=''; ok.textContent='';
+  const id=S[i].id;
+  if(id==='welcome'){
+    body.innerHTML='<p>数据将保存到：</p><code id=rootShow></code><p class=tip>可在下一步修改。安装后请用浏览器打开面板登录。</p>';
+    document.getElementById('rootShow').textContent=d.root; btn.textContent='开始';
+  } else if(id==='admin'){
+    body.innerHTML='<label>用户名<input name=username autocomplete=username></label>'+
+      '<label>密码<input name=password type=password autocomplete=new-password></label>'+
+      '<label>端口<input name=port type=number></label>'+
+      '<label>数据目录<input name=root></label>';
+    body.querySelector('[name=username]').value=d.username;
+    body.querySelector('[name=password]').value=d.password;
+    body.querySelector('[name=port]').value=d.port;
+    body.querySelector('[name=root]').value=d.root;
+    btn.textContent='下一步';
+  } else if(id==='vault'){
+    body.innerHTML='<label>保险库口令（至少 12 位）<input name=vault_passphrase type=password></label>'+
+      '<p class=tip>口令会写入 <code>var/vault-passphrase.txt</code>（仅你可读）。也可之后设置环境变量 <code>GE_VAULT_PASSPHRASE</code>。</p>';
+    body.querySelector('[name=vault_passphrase]').value=d.vault_passphrase;
+    btn.textContent='下一步';
+  } else if(id==='turso'){
+    body.innerHTML='<label>Turso token 文件路径（可选）<input name=turso_token_file placeholder="/home/…/turso-staging.json"></label>'+
+      '<label>库 URL（可选，文件里已有可留空）<input name=turso_url placeholder="libsql://…"></label>'+
+      '<p class=tip>文件须仅自己可读，且只放<strong>测试库</strong> token。不要填生产库。</p>';
+    body.querySelector('[name=turso_token_file]').value=d.turso_token_file;
+    body.querySelector('[name=turso_url]').value=d.turso_url;
+    btn.textContent='下一步';
+  } else {
+    body.innerHTML='<ul style="padding-left:1.2rem">'+
+      '<li>管理员：<b id=fUser></b></li><li>端口：<b id=fPort></b></li><li>目录：<code id=fRoot></code></li>'+
+      '<li>内容库：<span id=fTurso></span></li></ul>';
+    document.getElementById('fUser').textContent=d.username;
+    document.getElementById('fPort').textContent=d.port;
+    document.getElementById('fRoot').textContent=d.root;
+    document.getElementById('fTurso').textContent=d.turso_token_file?('已选 '+d.turso_token_file):'稍后配置';
+    btn.textContent='开始安装';
+  }
+}
+
+document.getElementById('f').onsubmit=async function(e){
+  e.preventDefault(); err.textContent='';
+  const fd=new FormData(e.target);
+  fd.forEach(function(v,k){ d[k]=v; });
+  if(i<S.length-1){ i++; render(); return; }
+  btn.disabled=true; btn.textContent='安装中…';
+  try{
+    const r=await fetch('/api/setup/apply',{method:'POST',headers:{'Content-Type':'application/json','X-GE-Panel':'1'},body:JSON.stringify(d)});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.detail||j.error||String(r.status));
+    ok.textContent='安装成功！\n面板地址：'+j.panel_url+'\n'+j.next+'\n前端：'+j.frontend+
+      '\n\n请关闭本页，启动面板：\nge-panel --config '+j.config;
+    btn.textContent='已完成';
+  }catch(x){ err.textContent=x.message; btn.disabled=false; btn.textContent='重试'; }
+};
+</script></body></html>

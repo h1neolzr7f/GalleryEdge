@@ -29,3 +29,26 @@ progress.hot::-webkit-progress-value{background:#e0a53a}progress.hot::-moz-progr
 .who{margin-top:24px;font-size:12px;opacity:.85}
 .b-ok{background:#d9f5df;color:#17652b}.b-fail{background:#fde0e0;color:#a11}
 main table a { color: #8ab4ff; }
+
+/* beginner ops */
+.ops-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 1rem; }
+.ops-tabs button { background: #1a2332; border: 1px solid #2a3a52; color: #c5d0e0; padding: .45rem .8rem; border-radius: 8px; cursor: pointer; }
+.ops-tabs button.on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.ops-panel { background: #121a24; border: 1px solid #243247; border-radius: 10px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
+.ops-panel label { display: block; margin: .55rem 0 .2rem; font-size: .85rem; color: #b6c2d6; }
+.ops-panel input, .ops-panel select { width: 100%; box-sizing: border-box; padding: .45rem .6rem; border-radius: 6px; border: 1px solid #2a3a52; background: #0f1419; color: #e7ecf3; }
+.ops-panel .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
+.ops-panel .row label { flex: 1; min-width: 120px; }
+.ops-panel button { margin-top: .75rem; margin-right: .5rem; }
+.ops-panel button.ghost { background: transparent; border: 1px solid #2a3a52; color: #8ab4ff; }
+.ops-panel button.danger { background: #b91c1c; }
+.ops-panel details { margin: .5rem 0; }
+.cat-list { max-height: 140px; overflow: auto; font-size: .8rem; columns: 2; }
+.confirm { display: flex !important; align-items: center; gap: .5rem; margin: .9rem 0 .4rem; color: #fbbf24; }
+.confirm input { width: auto !important; }
+.empty-tip { padding: 1.5rem; border: 1px dashed #2a3a52; border-radius: 10px; color: #8b9bb4; background: #0f1419; margin: .75rem 0; }
+.tip { color: #93c5fd; font-size: .9rem; margin: 0 0 .75rem; }
+.badge.b-warn { background: #854d0e; color: #fde68a; }
+.badge.b-queued, .badge.b-running { background: #1e3a5f; color: #93c5fd; }
+.badge.b-done { background: #14532d; color: #86efac; }
+.badge.b-error, .badge.b-cancelled { background: #7f1d1d; color: #fecaca; }

@@ -79,7 +79,7 @@ import { App, ConfigView, ReleasesView, SelfcheckView, UsersView } from "../src/
 test("unauthenticated app shows login, never the dashboard", async () => {
   mockFetch({ "GET /api/auth/state": { user: null, needs_setup: true } });
   render(<App />);
-  await screen.findByText(/admin create/);
+  await screen.findAllByText(/安装向导/);
   expect(screen.queryByText("包任务")).toBeNull();
 });
 
@@ -171,4 +171,25 @@ test("users page: change role and revoke invite", async () => {
   expect(JSON.parse(String(calls.find(c => c.url === "/api/users/bob/role")!.init!.body))).toEqual({ role: "admin" });
   fireEvent.click(screen.getByText("撤销"));
   await waitFor(() => expect(calls.some(c => c.url === "/api/invites/abcd1234/revoke")).toBe(true));
+});
+
+import { OpsView } from "../src/App";
+
+test("ops hub lists actions and requires confirm before crawl", async () => {
+  mockFetch({
+    "GET /api/ops/catalog": { adapters: [{ id: "synthetic", label: "演示数据（离线）", tip: "练手" }], commons_categories: ["Featured_pictures_of_flowers"], cf_scripts: ["galleryedge-staging"], tips: { crawl: "先试演示", ingest: "i", keys: "k", cf: "c", backup: "b" } },
+    "GET /api/ops/jobs": { jobs: [] },
+    "GET /api/ops/packs": { packs: [] },
+    "POST /api/ops/crawl": { id: 7 },
+  });
+  render(<OpsView />);
+  await screen.findByText(/演示数据/);
+  expect(screen.getByText(/先试演示/)).toBeTruthy();
+  const btn = screen.getByText("开始抓取") as HTMLButtonElement;
+  expect(btn.disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText(/我已确认/));
+  expect(btn.disabled).toBe(false);
+  fireEvent.click(btn);
+  await waitFor(() => expect(calls.some(c => c.url === "/api/ops/crawl")).toBe(true));
+  expect(JSON.parse(String(calls.find(c => c.url === "/api/ops/crawl")!.init!.body)).confirm).toBe(true);
 });

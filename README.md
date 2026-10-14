@@ -20,6 +20,9 @@ License: MIT
 | `ge-demo-data -n 100` | 生成合成作品数据 |
 
 ### 快速开始
+
+**小白推荐**：运行 `ge-panel --setup` 打开本机图形安装向导，然后看 [小白上手](docs/小白上手.md)。
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
