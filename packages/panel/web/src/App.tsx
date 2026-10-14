@@ -28,6 +28,12 @@ export function StatusView() {
       <div className={`kpi ${data.alerts_open ? "warn" : ""}`}><b>{data.alerts_open}</b><span>未确认告警</span></div>
       <div className={`kpi ${data.credentials_expiring.length ? "warn" : ""}`}><b>{data.credentials_expiring.length}</b><span>即将到期凭据</span></div>
     </div>
+    <h3>爬虫</h3>
+    {data.crawler ? <table><tbody>
+      <tr><td>最近心跳</td><td>{data.crawler.last_ts} · <code>{data.crawler.last_code}</code> · {data.crawler.last_message}</td></tr>
+      <tr><td>统计</td><td>抓取 {data.crawler.stats.fetched ?? "-"} · 记录 {data.crawler.stats.records ?? "-"} · 跳过 {data.crawler.stats.skipped ?? "-"} · 重复 {data.crawler.stats.dupes ?? "-"}</td></tr>
+      <tr><td>跳过原因</td><td>{Object.entries(data.crawler.skip_reasons).map(([k, v]) => <span key={k} className="badge b-protected" style={{ marginRight: 6 }}>{k} {String(v)}</span>)}</td></tr>
+    </tbody></table> : <p className="meta">还没有爬虫事件（用 <code>ge-crawl --panel-db</code> 接入）</p>}
     <h3>存储与数据库后端 <button onClick={run} disabled={busy}>{busy ? "检查中…" : "立即健康检查"}</button></h3>
     <table><thead><tr><th>ID</th><th>类型</th><th>状态</th><th>详情</th><th>最近探测</th></tr></thead><tbody>
       {data.backends.length === 0 && <tr><td colSpan={5}>还没跑过健康检查</td></tr>}

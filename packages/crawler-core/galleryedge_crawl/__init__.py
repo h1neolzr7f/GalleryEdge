@@ -149,7 +149,7 @@ def _now() -> str:
 
 class Crawler:
     def __init__(self, adapter: SiteAdapter, cfg: CrawlConfig, *, state_path: str, out_dir: str,
-                 fetcher=None, clock=time.monotonic, sleep=time.sleep):
+                 fetcher=None, clock=time.monotonic, sleep=time.sleep, on_event=None, heartbeat_every: int = 25):
         self.a, self.cfg = adapter, cfg
         self.fetcher = fetcher or HttpFetcher(cfg.user_agent())
         cfg.user_agent()  # validate contact even with an injected fetcher
@@ -160,6 +160,8 @@ class Crawler:
         self.last_hit: dict[str, float] = {}
         self.packs: list[Path] = []
         self.stats = {"fetched": 0, "records": 0, "skipped": 0, "dupes": 0}
+        self.on_event = on_event or (lambda level, code, msg, payload: None)
+        self.heartbeat_every = heartbeat_every
 
     # --- policy ---
     def _host(self, url):
@@ -243,6 +245,7 @@ class Crawler:
             self.st.counter("started", 1)
             self.st.db.commit()
         pages = self.st.counter("pages")
+        self.on_event("info", "crawler.start", f"{self.a.name} crawl started", {"adapter": self.a.name, "resumed_at_page": pages})
         while pages < self.cfg.max_pages and (url := self.st.pop()):
             res = self._fetch(url)
             if isinstance(res, Skip):
@@ -258,10 +261,19 @@ class Crawler:
                     self._accept(item, res)
             pages = self.st.counter("pages", 1)
             self.st.mark(url, res.status)
+            if pages % self.heartbeat_every == 0:
+                self.on_event("info", "crawler.heartbeat", f"{self.a.name}: {pages} pages", {"adapter": self.a.name, "pages": pages, **self.stats})
             self._maybe_flush(False)
         self._maybe_flush(True)
         self.stats["pages_total"] = pages
         self.stats["packs"] = [str(p) for p in self.packs]
+        reasons = dict(self.st.db.execute("SELECT reason, count(*) FROM skips GROUP BY reason").fetchall())
+        self.stats["skip_reasons"] = reasons
+        if reasons:
+            self.on_event("warn" if reasons.get("robots-unreachable") else "info", "crawler.skips",
+                          f"{self.a.name} skipped: " + ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())), {"adapter": self.a.name, "reasons": reasons})
+        self.on_event("info", "crawler.done", f"{self.a.name} done: {self.stats['records']} records, {len(self.packs)} packs",
+                      {"adapter": self.a.name, **{k: v for k, v in self.stats.items() if k != "packs"}, "packs": len(self.packs)})
         return self.stats
 
     def _accept(self, rec: Record, res: Response):

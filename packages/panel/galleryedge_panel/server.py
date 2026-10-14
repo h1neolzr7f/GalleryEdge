@@ -71,6 +71,16 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
         cols = [d[0] for d in r.description]
         return [dict(zip(cols, x)) for x in r.fetchall()]
 
+    def crawler_status():
+        import json as _j
+        hb = rows("SELECT ts,code,message,payload FROM events WHERE source='crawler' ORDER BY id DESC LIMIT 1")
+        sk = rows("SELECT payload FROM events WHERE source='crawler' AND code='crawler.skips' ORDER BY id DESC LIMIT 1")
+        if not hb:
+            return None
+        last = hb[0]
+        return {"last_ts": last["ts"], "last_code": last["code"], "last_message": last["message"],
+                "stats": _j.loads(last["payload"] or "{}"), "skip_reasons": _j.loads(sk[0]["payload"]).get("reasons", {}) if sk else {}}
+
     @app.get("/api/status")
     def status():
         expiring = vault.expiring(cfg.get("vault", {}).get("remind_days", 14)) if vault else []
@@ -81,6 +91,7 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None) -> FastAPI:
             "packs": packs.summary(conn),
             "alerts_open": conn.execute("SELECT count(*) FROM alerts WHERE acked=0").fetchone()[0],
             "credentials_expiring": [{k: e[k] for k in ("name", "days_left", "expired")} for e in expiring],
+            "crawler": crawler_status(),
             "recent_events": rows("SELECT id,ts,source,level,code,message FROM events ORDER BY id DESC LIMIT 10"),
         }
 
