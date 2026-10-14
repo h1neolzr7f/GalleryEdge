@@ -96,6 +96,38 @@ def set_status(conn, actor: str, username: str, status: str) -> None:
     audit(conn, actor, f"user.{status}", {"username": username})
 
 
+def set_role(conn, actor: str, username: str, role: str) -> None:
+    if role not in ROLES:
+        raise AuthError("bad role")
+    r = conn.execute("SELECT role, status FROM users WHERE username=?", (username,)).fetchone()
+    if not r:
+        raise AuthError("no such user")
+    if r[0] == role:
+        return
+    if r[0] == "admin":
+        admins = conn.execute("SELECT count(*) FROM users WHERE role='admin' AND status='active'").fetchone()[0]
+        if admins <= 1 and r[1] == "active":
+            raise AuthError("cannot demote the last admin")
+        if username == actor:
+            raise AuthError("cannot change your own role")
+    conn.execute("UPDATE users SET role=? WHERE username=?", (role, username))
+    conn.execute("DELETE FROM sessions WHERE username=?", (username,))  # new role takes effect on next login
+    conn.commit()
+    audit(conn, actor, "user.role", {"username": username, "from": r[0], "to": role})
+
+
+def revoke_invite(conn, actor: str, invite_id: str) -> None:
+    if not invite_id or len(invite_id) < 8:
+        raise AuthError("bad invite id")
+    rows = conn.execute("SELECT code_hash, used_by FROM invites WHERE substr(code_hash,1,?)=?", (len(invite_id), invite_id)).fetchall()
+    if len(rows) != 1:
+        raise AuthError("no such invite")
+    if rows[0][1]:
+        raise AuthError("invite already used or revoked")
+    conn.execute("UPDATE invites SET used_by=? WHERE code_hash=?", (f"revoked:{actor}", rows[0][0])); conn.commit()
+    audit(conn, actor, "invite.revoke", {"id": invite_id})
+
+
 def create_invite(conn, actor: str, role: str = "viewer", ttl_days: int = 7, note: str = "") -> str:
     if role not in ROLES:
         raise AuthError("bad role")

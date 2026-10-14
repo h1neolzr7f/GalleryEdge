@@ -274,6 +274,16 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
         code = auth_call(lambda: auth.create_invite(conn, who(request), body.get("role", "viewer"), int(body.get("ttl_days", 7)), str(body.get("note", ""))[:100]))
         return {"code": code, "note": "shown once"}
 
+    @app.post("/api/users/{username}/role")
+    def user_role(request: Request, username: str, body: dict = Body(...)):
+        auth_call(lambda: auth.set_role(conn, who(request), username, str(body.get("role", ""))))
+        return {"ok": True}
+
+    @app.post("/api/invites/{invite_id}/revoke")
+    def invite_revoke(request: Request, invite_id: str):
+        auth_call(lambda: auth.revoke_invite(conn, who(request), invite_id))
+        return {"ok": True}
+
     @app.post("/api/users/{username}/{status}")
     def user_status(request: Request, username: str, status: str):
         auth_call(lambda: auth.set_status(conn, who(request), username, status))

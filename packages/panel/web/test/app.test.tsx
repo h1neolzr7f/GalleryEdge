@@ -159,3 +159,16 @@ test("2FA enrol flow posts the code to enable", async () => {
   await waitFor(() => expect(calls.some(c => c.url === "/api/auth/totp/enable")).toBe(true));
   expect(JSON.parse(String(calls.find(c => c.url === "/api/auth/totp/enable")!.init!.body))).toEqual({ code: "654321" });
 });
+
+test("users page: change role and revoke invite", async () => {
+  mockFetch({ "GET /api/users": { users: [{ username: "bob", role: "viewer", status: "active" }],
+    invites: [{ id: "abcd1234", role: "viewer", created_by: "dick", expires_at: "2099-01-01T00:00:00+00:00", used_by: null }] },
+    "POST /api/users/bob/role": { ok: true }, "POST /api/invites/abcd1234/revoke": { ok: true } });
+  (globalThis as any).confirm = () => true;
+  render(<UsersView />);
+  fireEvent.change(await screen.findByLabelText("角色 bob"), { target: { value: "admin" } });
+  await waitFor(() => expect(calls.some(c => c.url === "/api/users/bob/role")).toBe(true));
+  expect(JSON.parse(String(calls.find(c => c.url === "/api/users/bob/role")!.init!.body))).toEqual({ role: "admin" });
+  fireEvent.click(screen.getByText("撤销"));
+  await waitFor(() => expect(calls.some(c => c.url === "/api/invites/abcd1234/revoke")).toBe(true));
+});
