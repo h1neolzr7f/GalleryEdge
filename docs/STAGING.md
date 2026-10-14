@@ -73,3 +73,9 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
 - `database.index` + `index_token_file`（0600，只取 `ro_token`）→「站点内容」页只读浏览/搜索 staging 内容库。
 - 两步验证（RFC 6238，标准身份验证器可用）：绑定/重置只允许本机；`panel.allow_remote=true` 时非本机登录必须已启用 TOTP，否则拒绝；动态码防重放（last_step）。
 - 远程部署要求：放在 HTTPS 反代后面（cookie secure），仍需登录 + TOTP；默认仍 `bind=127.0.0.1`，本次未对公网暴露。
+
+## 真实 Cloudflare 发布/回滚 + DB 备份（polish-5）
+- `ge-cf-release --script galleryedge-staging --cred-file <cf.json> [--cred-key index] list|deploy --tag X|rollback [--to <version_id>]`
+  上传用 `wrangler versions upload`，激活/回滚用 Workers Deployments API（100% 单版本）。脚本名必须是 `galleryedge-*`，其它 Worker（含 prod `nai`）一律拒绝。
+  注意：Cloudflare 的版本包含当时的 secrets；回滚到早于某次 `secret put` 的版本会连同旧 secrets 一起回滚。
+- `ge-db-backup dump --db <url> --token-file <json> --out x.jsonl.gz`（只读 token 即可）/ `restore --db <空库> --src x.jsonl.gz`（仅空库、校验 sha256 与行数、重建 FTS）。
