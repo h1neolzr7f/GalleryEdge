@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, fmtBytes } from "./api";
 
-type Tab = "status" | "packs" | "storage" | "alerts" | "cleanup" | "events" | "config" | "users" | "releases" | "selfcheck" | "content" | "security";
+type Tab = "status" | "packs" | "storage" | "alerts" | "cleanup" | "events" | "config" | "users" | "releases" | "selfcheck" | "content" | "security" | "ops";
 const TABS: [Tab, string][] = [["status", "状态"], ["packs", "包任务"], ["storage", "存储与成本"], ["alerts", "告警"], ["cleanup", "清理"], ["events", "事件日志"],
-  ["config", "配置中心"], ["users", "用户"], ["releases", "发布"], ["selfcheck", "安全自检"], ["content", "站点内容"], ["security", "两步验证"]];
+  ["config", "配置中心"], ["users", "用户"], ["releases", "发布"], ["selfcheck", "安全自检"], ["ops", "可视化运维"], ["content", "站点内容"], ["security", "两步验证"]];
 
 function useLoad<T>(path: string, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -21,6 +21,7 @@ export function StatusView() {
   if (err) return <p className="err">{err}</p>;
   if (!data) return <p>加载中…</p>;
   const run = async () => { setBusy(true); try { await api("/api/health/run", { method: "POST" }); } finally { setBusy(false); reload(); } };
+  if (!data.configured_backends?.length) return <div className="empty-tip"><p>还没有配置任何存储后端。请到「配置中心」或重新运行安装向导。</p></div>;
   const total = Object.values(data.packs as Record<string, number>).reduce((a, b) => a + b, 0);
   return (<div>
     <div className="cards">
@@ -205,8 +206,8 @@ export function LoginView({ needsSetup, onDone }: { needsSetup: boolean; onDone:
   };
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   return (<div className="login"><form onSubmit={submit}>
-    <h1>GalleryEdge<small>运维面板 · 仅本机</small></h1>
-    {needsSetup && <p className="warn-box">还没有账号。请在终端运行 <code>ge-panel --config config.json admin create &lt;用户名&gt;</code> 创建管理员。</p>}
+    <h1>GalleryEdge<small>运维面板 · 图形化操作</small></h1>
+    {needsSetup && <p className="warn-box">还没有账号。若是第一次使用，请关掉本页，运行带 <code>--setup</code> 的安装向导；或请管理员发邀请码。</p>}
     <label>用户名<input value={f.username} onChange={set("username")} autoComplete="username" /></label>
     <label>密码<input type="password" value={f.password} onChange={set("password")} autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
     {needOtp && <label>动态码（TOTP）<input value={f.otp} onChange={set("otp")} inputMode="numeric" autoComplete="one-time-code" maxLength={6} /></label>}
@@ -362,6 +363,131 @@ export function SecurityView() {
   </div>);
 }
 
+
+function Empty({ tip }: { tip: string }) {
+  return <div className="empty-tip"><p>{tip}</p></div>;
+}
+
+function Confirm({ ok, setOk, label = "我已确认，执行此操作" }: { ok: boolean; setOk: (v: boolean) => void; label?: string }) {
+  return <label className="confirm"><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> {label}</label>;
+}
+
+export function OpsView() {
+  const { data: cat } = useLoad<any>("/api/ops/catalog");
+  const { data: jobData, reload: reloadJobs } = useLoad<any>("/api/ops/jobs");
+  const { data: packData, reload: reloadPacks } = useLoad<any>("/api/ops/packs");
+  const [tab, setTab] = useState<"crawl" | "ingest" | "keys" | "cf" | "backup">("crawl");
+  const [msg, setMsg] = useState(""); const [busy, setBusy] = useState(false); const [ok, setOk] = useState(false);
+  const [crawl, setCrawl] = useState({ adapter: "synthetic", contact: "", categories: "", max_pages: 50, min_interval: 1, n: 30 });
+  const [keyForm, setKeyForm] = useState({ label: "panel", prefix: "" });
+  const [cf, setCf] = useState({ script: "galleryedge-staging", cred_file: "", cred_key: "index", wrangler_config: "", tag: "panel-1", message: "", to: "" });
+  const [bak, setBak] = useState({ src: "", target_db: "", token_file: "" });
+
+  useEffect(() => {
+    const t = setInterval(reloadJobs, 2000);
+    return () => clearInterval(t);
+  }, [reloadJobs]);
+
+  const run = async (path: string, body: Record<string, unknown>) => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await api<any>(path, { method: "POST", body: { ...body, confirm: true } });
+      setMsg(`已排队任务 #${r.id}，可在下方查看进度`); setOk(false); reloadJobs();
+    } catch (e: any) { setMsg(e.message); }
+    finally { setBusy(false); }
+  };
+
+  if (!cat) return <p>加载中…</p>;
+
+  return (<div className="ops">
+    <p className="meta">所有运维动作都在这里点按钮完成，不用记命令。危险操作需勾选确认；密钥不会显示全文。</p>
+    <div className="ops-tabs">
+      {([["crawl", "① 抓取"], ["ingest", "② 入库"], ["keys", "③ API 密钥"], ["cf", "④ 发布/回滚"], ["backup", "⑤ 备份"]] as const)
+        .map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => { setTab(k); setOk(false); setMsg(""); }}>{l}</button>)}
+    </div>
+
+    {tab === "crawl" && <div className="ops-panel">
+      <p className="tip">{cat.tips.crawl}</p>
+      <label>数据源<select value={crawl.adapter} onChange={e => setCrawl({ ...crawl, adapter: e.target.value })}>
+        {cat.adapters.map((a: any) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
+      <p className="meta">{cat.adapters.find((a: any) => a.id === crawl.adapter)?.tip}</p>
+      {crawl.adapter !== "synthetic" && <label>联系方式（邮箱或网址）<input value={crawl.contact} onChange={e => setCrawl({ ...crawl, contact: e.target.value })} placeholder="you@example.com" /></label>}
+      {crawl.adapter === "wikimedia-commons" && <label>分类（逗号分隔，留空=前几个白名单）
+        <input value={crawl.categories} onChange={e => setCrawl({ ...crawl, categories: e.target.value })} placeholder="Featured_pictures_of_flowers,…" /></label>}
+      <div className="row">
+        <label>最多页数<input type="number" value={crawl.max_pages} onChange={e => setCrawl({ ...crawl, max_pages: Number(e.target.value) })} /></label>
+        <label>间隔秒<input type="number" step="0.5" value={crawl.min_interval} onChange={e => setCrawl({ ...crawl, min_interval: Number(e.target.value) })} /></label>
+        {crawl.adapter === "synthetic" && <label>条数<input type="number" value={crawl.n} onChange={e => setCrawl({ ...crawl, n: Number(e.target.value) })} /></label>}
+      </div>
+      <details><summary>白名单分类一览</summary><ul className="cat-list">{cat.commons_categories.map((c: string) => <li key={c}><code>{c}</code></li>)}</ul></details>
+      <Confirm ok={ok} setOk={setOk} />
+      <button disabled={!ok || busy} onClick={() => run("/api/ops/crawl", crawl)}>开始抓取</button>
+    </div>}
+
+    {tab === "ingest" && <div className="ops-panel">
+      <p className="tip">{cat.tips.ingest}</p>
+      {!packData?.packs?.length ? <Empty tip="还没有数据包。先去「① 抓取」生成，或把 .tar 放到 packs 目录。" /> :
+        <table><thead><tr><th>包</th><th>大小</th></tr></thead><tbody>
+          {packData.packs.map((p: any) => <tr key={p.path}><td><code>{p.name}</code></td><td>{fmtBytes(p.size)}</td></tr>)}
+        </tbody></table>}
+      <button type="button" className="ghost" onClick={reloadPacks}>刷新列表</button>
+      <Confirm ok={ok} setOk={setOk} label="确认把以上包写入内容库（测试库）" />
+      <button disabled={!ok || busy || !packData?.packs?.length} onClick={() => run("/api/ops/ingest", {})}>全部入库</button>
+    </div>}
+
+    {tab === "keys" && <div className="ops-panel">
+      <p className="tip">{cat.tips.keys}</p>
+      <label>备注<label /><input value={keyForm.label} onChange={e => setKeyForm({ ...keyForm, label: e.target.value })} /></label>
+      <Confirm ok={ok} setOk={setOk} />
+      <div className="row">
+        <button disabled={!ok || busy} onClick={() => run("/api/ops/keys/init", {})}>初始化用量表</button>
+        <button disabled={!ok || busy} onClick={() => run("/api/ops/keys/create", { label: keyForm.label })}>创建密钥</button>
+      </div>
+      <label>撤销（填 prefix）<input value={keyForm.prefix} onChange={e => setKeyForm({ ...keyForm, prefix: e.target.value })} placeholder="如 abcd1234" /></label>
+      <button className="danger" disabled={!ok || busy || !keyForm.prefix} onClick={() => run("/api/ops/keys/revoke", { prefix: keyForm.prefix })}>撤销密钥</button>
+    </div>}
+
+    {tab === "cf" && <div className="ops-panel">
+      <p className="tip">{cat.tips.cf}</p>
+      <label>Worker<select value={cf.script} onChange={e => setCf({ ...cf, script: e.target.value })}>
+        {cat.cf_scripts.map((s: string) => <option key={s}>{s}</option>)}</select></label>
+      <label>凭据文件路径<input value={cf.cred_file} onChange={e => setCf({ ...cf, cred_file: e.target.value })} placeholder="/home/…/cf-api.json" /></label>
+      <label>凭据键（可选）<input value={cf.cred_key} onChange={e => setCf({ ...cf, cred_key: e.target.value })} /></label>
+      <label>wrangler.toml 路径（发布时需要）<input value={cf.wrangler_config} onChange={e => setCf({ ...cf, wrangler_config: e.target.value })} /></label>
+      <div className="row">
+        <label>版本标签<input value={cf.tag} onChange={e => setCf({ ...cf, tag: e.target.value })} /></label>
+        <label>回滚到（版本 id，可空=上一版）<input value={cf.to} onChange={e => setCf({ ...cf, to: e.target.value })} /></label>
+      </div>
+      <Confirm ok={ok} setOk={setOk} label="确认：只操作 galleryedge-*，不动生产" />
+      <div className="row">
+        <button disabled={!ok || busy} onClick={() => run("/api/ops/cf/list", cf)}>查看版本</button>
+        <button disabled={!ok || busy || !cf.wrangler_config} onClick={() => run("/api/ops/cf/deploy", cf)}>发布</button>
+        <button className="danger" disabled={!ok || busy} onClick={() => run("/api/ops/cf/rollback", cf)}>回滚</button>
+      </div>
+    </div>}
+
+    {tab === "backup" && <div className="ops-panel">
+      <p className="tip">{cat.tips.backup}</p>
+      <Confirm ok={ok} setOk={setOk} />
+      <button disabled={!ok || busy} onClick={() => run("/api/ops/db/dump", {})}>导出内容库</button>
+      <label>备份文件<input value={bak.src} onChange={e => setBak({ ...bak, src: e.target.value })} placeholder="…/index-….jsonl.gz" /></label>
+      <label>目标空库 URL<input value={bak.target_db} onChange={e => setBak({ ...bak, target_db: e.target.value })} placeholder="libsql://… 或 file:…" /></label>
+      <label>目标库 token 文件<input value={bak.token_file} onChange={e => setBak({ ...bak, token_file: e.target.value })} /></label>
+      <button className="danger" disabled={!ok || busy || !bak.src || !bak.target_db} onClick={() => run("/api/ops/db/restore", bak)}>恢复到空库</button>
+    </div>}
+
+    {msg && <p className={msg.includes("失败") || msg.includes("error") ? "err" : "meta"}>{msg}</p>}
+
+    <h3>任务进度</h3>
+    {!jobData?.jobs?.length ? <Empty tip="还没有任务。在上方选一个操作并确认执行。" /> :
+      <table><thead><tr><th>#</th><th>类型</th><th>状态</th><th>进度</th><th>说明</th><th>时间</th></tr></thead><tbody>
+        {jobData.jobs.map((j: any) => <tr key={j.id}>
+          <td>{j.id}</td><td>{j.kind}</td><td><Badge v={j.status === "done" ? "up" : j.status === "error" ? "down" : "warn"} /></td>
+          <td>{Math.round((j.progress || 0) * 100)}%</td><td>{j.message}</td><td className="meta">{j.updated_at}</td></tr>)}
+      </tbody></table>}
+  </div>);
+}
+
 export function App() {
   const [auth, setAuth] = useState<any>(null);
   const check = useCallback(() => { api("/api/auth/state").then(setAuth).catch(() => setAuth({ user: null, needs_setup: false })); }, []);
@@ -375,9 +501,9 @@ function Shell({ user, onLogout }: { user: any; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>(() => (location.hash.slice(1) as Tab) || "status");
   useEffect(() => { location.hash = tab; }, [tab]);
   const View = { status: StatusView, packs: PacksView, storage: StorageView, alerts: AlertsView, cleanup: CleanupView, events: EventsView,
-    config: ConfigView, users: UsersView, releases: ReleasesView, selfcheck: SelfcheckView, content: ContentView, security: SecurityView }[tab] ?? StatusView;
+    config: ConfigView, users: UsersView, releases: ReleasesView, selfcheck: SelfcheckView, content: ContentView, security: SecurityView, ops: OpsView }[tab] ?? StatusView;
   return (<div className="app">
-    <aside><h1>GalleryEdge<small>运维面板 · 仅本机</small></h1>
+    <aside><h1>GalleryEdge<small>运维面板 · 图形化操作</small></h1>
       <nav>{TABS.map(([k, label]) => <button key={k} className={k === tab ? "on" : ""} onClick={() => setTab(k)}>{label}</button>)}</nav>
       <div className="who">{user.username} · {user.role}<br /><button onClick={onLogout}>退出登录</button></div>
     </aside>

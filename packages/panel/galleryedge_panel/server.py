@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from galleryedge_ops import alerts as alerts_mod
-from galleryedge_ops import auth, backup, cleanup, events, health, packs, releases, selfcheck
+from galleryedge_ops import auth, backup, cleanup, events, health, jobs, packs, releases, selfcheck
 from galleryedge_ops import config as config_mod
 from galleryedge_ops.masking import redact_obj
 
@@ -410,7 +410,99 @@ def create_app(cfg: dict, conn, vault=None, *, alerter=None, index_db=None) -> F
         events.audit(conn, who(request), "backup.drill", {"files": restored})
         return {"ok": True, "files": restored, "manifest": man["files"]}
 
+
+    # ---------- visual ops hub (crawl / ingest / keys / CF / DB) ----------
+    jobs.migrate(conn)
+    runner = jobs.JobRunner(conn, cfg, vault)
+    runner.start()
+    app.state.job_runner = runner
+
+    def _confirm(body: dict):
+        if body.get("confirm") is not True:
+            raise HTTPException(400, "请勾选确认后再执行")
+
+    @app.get("/api/ops/catalog")
+    def ops_catalog():
+        from galleryedge_adapters.commons import SFW_CATEGORIES
+        return {
+            "adapters": [
+                {"id": "synthetic", "label": "演示数据（离线）", "tip": "不访问网络，生成假数据练手"},
+                {"id": "wikimedia-commons", "label": "Wikimedia Commons", "tip": "自由许可图片；需填写联系方式；遵守 robots"},
+                {"id": "openverse", "label": "Openverse（遵守 robots）", "tip": "线上 API 的 robots 禁止抓取；仅在允许的镜像可用"},
+            ],
+            "commons_categories": list(SFW_CATEGORIES),
+            "cf_scripts": ["galleryedge-staging"],
+            "tips": {
+                "crawl": "先选「演示数据」试一遍；真源请填邮箱/网址，并遵守站点规则。",
+                "ingest": "把抓到的包写入内容库。内容库需是测试库，不要指向生产。",
+                "keys": "新密钥只写入本机 0600 文件，页面只显示前缀。",
+                "cf": "只能操作 galleryedge-* 开头的 Worker，不会碰生产 nai。",
+                "backup": "导出可用只读 token；恢复只允许写入空库。",
+            },
+        }
+
+    @app.get("/api/ops/jobs")
+    def ops_jobs(limit: int = 40):
+        return {"jobs": jobs.list_jobs(conn, limit)}
+
+    @app.get("/api/ops/jobs/{jid}")
+    def ops_job(jid: int):
+        j = jobs.get_job(conn, jid)
+        if not j:
+            raise HTTPException(404, "任务不存在")
+        return j
+
+    @app.post("/api/ops/crawl")
+    def ops_crawl(request: Request, body: dict = Body(...)):
+        _confirm(body)
+        return {"id": jobs.enqueue(conn, "crawl", who(request), {k: body.get(k) for k in
+            ("adapter", "contact", "categories", "queries", "max_pages", "min_interval", "category_pages", "subcat_depth", "n", "pack_size")})}
+
+    @app.post("/api/ops/ingest")
+    def ops_ingest(request: Request, body: dict = Body(...)):
+        _confirm(body)
+        return {"id": jobs.enqueue(conn, "ingest", who(request), {"packs": body.get("packs") or []})}
+
+    @app.post("/api/ops/keys/{action}")
+    def ops_keys(request: Request, action: str, body: dict = Body(...)):
+        _confirm(body)
+        kind = {"init": "keys_init", "create": "keys_create", "revoke": "keys_revoke"}.get(action)
+        if not kind:
+            raise HTTPException(404, "unknown action")
+        return {"id": jobs.enqueue(conn, kind, who(request), {k: body.get(k) for k in ("plan", "label", "prefix", "out", "usage_db", "token_file")})}
+
+    @app.post("/api/ops/cf/{action}")
+    def ops_cf(request: Request, action: str, body: dict = Body(...)):
+        _confirm(body)
+        kind = {"list": "cf_list", "deploy": "cf_deploy", "rollback": "cf_rollback"}.get(action)
+        if not kind:
+            raise HTTPException(404, "unknown action")
+        script = body.get("script") or "galleryedge-staging"
+        if not str(script).startswith("galleryedge-"):
+            raise HTTPException(400, "只能操作 galleryedge-* Worker")
+        return {"id": jobs.enqueue(conn, kind, who(request), {k: body.get(k) for k in
+            ("script", "cred_file", "cred_key", "wrangler_config", "wrangler", "tag", "message", "to")})}
+
+    @app.post("/api/ops/db/{action}")
+    def ops_db(request: Request, action: str, body: dict = Body(...)):
+        _confirm(body)
+        kind = {"dump": "db_dump", "restore": "db_restore"}.get(action)
+        if not kind:
+            raise HTTPException(404, "unknown action")
+        return {"id": jobs.enqueue(conn, kind, who(request), {k: body.get(k) for k in
+            ("out", "src", "target_db", "token_file", "table_prefix")})}
+
+    @app.get("/api/ops/packs")
+    def ops_packs_list():
+        root = Path(cfg["panel"]["state_dir"]) / "packs"
+        items = []
+        if root.is_dir():
+            for p in sorted(root.glob("*.tar")):
+                items.append({"name": p.name, "path": str(p), "size": p.stat().st_size, "mtime": p.stat().st_mtime})
+        return {"packs": items, "dir": str(root)}
+
     # ---------- storage tiering + cost ----------
+
     from galleryedge_storage import LocalBackend, Router, Rule, forecast, migrate, monthly_cost, plan_cold_migration, snapshot
 
     observed = [b for b in cfg["backends"] if b["type"] == "local" and b.get("path")]
