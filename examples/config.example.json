@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "panel": {"bind": "127.0.0.1", "allow_remote": false, "state_dir": "./var"},
+  "database": {"primary": "file:./var/panel.db"},
+  "backends": [
+    {"id": "local-hot", "type": "local", "path": "./var/storage/hot", "tier": "hot", "quota_bytes": 10737418240},
+    {"id": "local-cold", "type": "local", "path": "./var/storage/cold", "tier": "cold"}
+  ],
+  "alerts": {"panel": true, "dedupe_minutes": 30, "fail_threshold": 1},
+  "vault": {"path": "./var/credentials.vault", "remind_days": 14},
+  "cleanup": {"roots": ["./var/work"]}
+}
