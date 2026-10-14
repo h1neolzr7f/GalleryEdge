@@ -2,73 +2,217 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "GalleryEdge config",
   "type": "object",
-  "required": ["version", "panel", "database", "backends", "alerts"],
+  "required": [
+    "version",
+    "panel",
+    "database",
+    "backends",
+    "alerts"
+  ],
   "additionalProperties": false,
   "properties": {
-    "version": {"const": 1},
+    "version": {
+      "const": 1
+    },
     "panel": {
-      "type": "object", "additionalProperties": false,
-      "required": ["bind"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bind"
+      ],
       "properties": {
-        "bind": {"type": "string", "default": "127.0.0.1"},
-        "allow_remote": {"type": "boolean", "default": false},
-        "state_dir": {"type": "string"}
+        "bind": {
+          "type": "string",
+          "default": "127.0.0.1"
+        },
+        "allow_remote": {
+          "type": "boolean",
+          "default": false
+        },
+        "state_dir": {
+          "type": "string"
+        },
+        "takeover": {
+          "type": "boolean",
+          "default": false,
+          "description": "allow write actions on pack tasks (retry/pause/skip); default read-only observe mode"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8790
+        }
       }
     },
     "database": {
-      "type": "object", "additionalProperties": false,
-      "required": ["primary"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary"
+      ],
       "properties": {
-        "primary": {"type": "string", "description": "libsql://, file: path or :memory:"},
-        "auth_token_ref": {"type": "string", "pattern": "^vault:[A-Za-z0-9_.-]+$"},
-        "d1_optional": {"type": "boolean", "default": false}
+        "primary": {
+          "type": "string",
+          "description": "libsql://, file: path or :memory:"
+        },
+        "auth_token_ref": {
+          "type": "string",
+          "pattern": "^vault:[A-Za-z0-9_.-]+$"
+        },
+        "d1_optional": {
+          "type": "boolean",
+          "default": false
+        }
       }
     },
     "backends": {
       "type": "array",
       "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["id", "type"],
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type"
+        ],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
-          "type": {"enum": ["local", "http", "libsql", "s3", "r2"]},
-          "path": {"type": "string"},
-          "url": {"type": "string"},
-          "tier": {"enum": ["hot", "cold"], "default": "hot"},
-          "quota_bytes": {"type": "integer", "minimum": 0},
-          "warn_ratio": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "default": 0.85},
-          "credential_ref": {"type": "string", "pattern": "^vault:[A-Za-z0-9_.-]+$"},
-          "timeout_s": {"type": "number", "exclusiveMinimum": 0, "default": 5}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+          },
+          "type": {
+            "enum": [
+              "local",
+              "http",
+              "libsql",
+              "s3",
+              "r2"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "hot",
+              "cold"
+            ],
+            "default": "hot"
+          },
+          "quota_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "warn_ratio": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "default": 0.85
+          },
+          "credential_ref": {
+            "type": "string",
+            "pattern": "^vault:[A-Za-z0-9_.-]+$"
+          },
+          "timeout_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 5
+          }
         }
       }
     },
     "alerts": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "panel": {"type": "boolean", "default": true},
-        "webhook_url_ref": {"type": "string", "pattern": "^vault:[A-Za-z0-9_.-]+$"},
-        "webhook_hmac_ref": {"type": "string", "pattern": "^vault:[A-Za-z0-9_.-]+$"},
-        "dedupe_minutes": {"type": "integer", "minimum": 0, "default": 30},
-        "fail_threshold": {"type": "integer", "minimum": 1, "default": 1}
+        "panel": {
+          "type": "boolean",
+          "default": true
+        },
+        "webhook_url_ref": {
+          "type": "string",
+          "pattern": "^vault:[A-Za-z0-9_.-]+$"
+        },
+        "webhook_hmac_ref": {
+          "type": "string",
+          "pattern": "^vault:[A-Za-z0-9_.-]+$"
+        },
+        "dedupe_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30
+        },
+        "fail_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
       }
     },
     "vault": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "path": {"type": "string"},
-        "remind_days": {"type": "integer", "minimum": 1, "default": 14}
+        "path": {
+          "type": "string"
+        },
+        "remind_days": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 14
+        }
       }
     },
     "cleanup": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "roots": {"type": "array", "items": {"type": "string"}},
-        "extra_protected": {"type": "array", "items": {"type": "string"}}
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "extra_protected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     }
   },
-  "allOf": [{
-    "if": {"properties": {"panel": {"properties": {"allow_remote": {"const": false}}}}},
-    "then": {"properties": {"panel": {"properties": {"bind": {"enum": ["127.0.0.1", "localhost", "::1"]}}}}}
-  }]
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "panel": {
+            "properties": {
+              "allow_remote": {
+                "const": false
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "panel": {
+            "properties": {
+              "bind": {
+                "enum": [
+                  "127.0.0.1",
+                  "localhost",
+                  "::1"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
