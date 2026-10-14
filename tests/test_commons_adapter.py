@@ -241,3 +241,15 @@ def test_category_pagination_rewrites_to_wiki_path():
     # bounded: second listing page does not link further
     links2 = [x.url for x in a.parse(Response(nxt[0], 200, {}, html.encode())) if isinstance(x, Link)]
     assert not any("filefrom" in l for l in links2)
+
+
+def test_category_pagination_ignores_subcategory_pager():
+    from galleryedge_adapters.commons import CommonsAdapter
+    from galleryedge_crawl import Link, Response
+    a = CommonsAdapter(["Quality_images_of_flowers"], max_category_pages=5)
+    html = ('<a href="/wiki/File:A.jpg">x</a>'
+            '<a href="/w/index.php?title=Category:Quality_images_of_flowers&amp;filefrom=OLD.JPG&amp;subcatfrom=Jasione#mw-subcategories" title="c">next page</a>'
+            '<a href="/w/index.php?title=Category:Quality_images_of_flowers&amp;filefrom=NEW.JPG#mw-category-media" title="c">next page</a>')
+    u = "https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers?filefrom=OLD.JPG"
+    nxt = [x.url for x in a.parse(Response(u, 200, {}, html.encode())) if isinstance(x, Link) and "filefrom" in x.url]
+    assert nxt == ["https://commons.wikimedia.org/wiki/Category:Quality_images_of_flowers?filefrom=NEW.JPG"]
