@@ -7,3 +7,7 @@ compatibility_date = "2026-01-01"
 DEMO_BANNER = "1"
 # TURSO_URL = "libsql://<your-db>.turso.io"   (set via `wrangler secret put TURSO_URL`)
 # TURSO_TOKEN                                 (set via `wrangler secret put TURSO_TOKEN`)
+
+# Optional: separate writable DB for API keys + usage counters, so TURSO_TOKEN can be read-only.
+#   wrangler secret put USAGE_URL ; wrangler secret put USAGE_TOKEN
+#   ge-keys --db <USAGE_URL> --token-file <json> init|create --out key.txt|revoke <prefix>|prune

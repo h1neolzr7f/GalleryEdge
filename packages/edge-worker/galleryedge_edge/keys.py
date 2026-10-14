@@ -11,6 +11,63 @@ def _h(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
+USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS api_plans(name TEXT PRIMARY KEY, rpm INTEGER NOT NULL, rpd INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys(prefix TEXT PRIMARY KEY, hash TEXT NOT NULL, plan TEXT NOT NULL, label TEXT,
+  status TEXT NOT NULL DEFAULT 'active', created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS usage_daily(prefix TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(prefix, day));
+CREATE TABLE IF NOT EXISTS usage_minute(prefix TEXT NOT NULL, minute TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(prefix, minute));
+INSERT OR IGNORE INTO api_plans VALUES ('demo', 30, 1000);
+"""
+
+
+def init_usage(db) -> None:
+    """Create only the key/usage tables (for a dedicated writable usage DB)."""
+    for s in USAGE_SCHEMA.split(";"):
+        if s.strip():
+            db.execute(s.strip())
+
+
+def prune(db, now: datetime | None = None, keep_days: int = 35) -> None:
+    """Keep the usage store small: drop minute buckets older than 1h and day buckets older than keep_days."""
+    now = now or datetime.now(timezone.utc)
+    from datetime import timedelta
+    db.execute("DELETE FROM usage_minute WHERE minute < ?", [(now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")])
+    db.execute("DELETE FROM usage_daily WHERE day < ?", [(now - timedelta(days=keep_days)).strftime("%Y-%m-%d")])
+
+
+def main(argv=None) -> int:
+    """ge-keys: manage API keys in the usage DB (token from --token-file; the new key is written to --out, never printed)."""
+    import argparse, json, os
+    from galleryedge_db.client import connect
+    ap = argparse.ArgumentParser(prog="ge-keys")
+    ap.add_argument("--db", required=True); ap.add_argument("--token-file")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    sp.add_parser("init")
+    c = sp.add_parser("create"); c.add_argument("--plan", default="demo"); c.add_argument("--label", default=""); c.add_argument("--out", required=True)
+    r = sp.add_parser("revoke"); r.add_argument("prefix")
+    sp.add_parser("prune")
+    a = ap.parse_args(argv)
+    tok = None
+    if a.token_file:
+        raw = open(a.token_file, encoding="utf-8").read().strip()
+        tok = (json.loads(raw).get("usage_rw_token") or json.loads(raw).get("rw_token")) if raw.startswith("{") else raw
+    db = connect(a.db, tok)
+    if a.cmd == "init":
+        init_usage(db); print("usage tables ready")
+    elif a.cmd == "create":
+        key = create_key(db, a.plan, a.label)
+        fd = os.open(a.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(key + "\n")
+        print(f"created key prefix {key.split('_')[1]} -> {a.out} (0600)")
+    elif a.cmd == "revoke":
+        revoke(db, a.prefix); print("revoked")
+    else:
+        prune(db); print("pruned")
+    return 0
+
+
 def create_key(db, plan: str = "demo", label: str = "") -> str:
     if not db.execute("SELECT 1 FROM api_plans WHERE name=?", [plan]).rows:
         raise ValueError(f"unknown plan {plan}")

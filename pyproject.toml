@@ -20,6 +20,7 @@ ge-panel = "galleryedge_panel.cli:main"
 ge-crawl = "galleryedge_crawl.cli:main"
 ge-ingest = "galleryedge_ingest:main"
 ge-aitag = "galleryedge_aitag:main"
+ge-keys = "galleryedge_edge.keys:main"
 ge-demo-source = "galleryedge_demosource:main"
 
 [build-system]

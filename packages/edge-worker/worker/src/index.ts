@@ -12,6 +12,8 @@ export interface Env {
   /** banner text override (e.g. staging notice) */
   BANNER_TEXT?: string;
   /** optional service binding to the image worker (same-account workers.dev fetches are blocked by Cloudflare) */
+  /** separate writable DB for API keys + usage counters (content DB token can then be read-only) */
+  USAGE_URL?: string; USAGE_TOKEN?: string;
   IMAGES?: { fetch(input: string, init?: RequestInit): Promise<Response> };
 }
 
@@ -56,14 +58,16 @@ export async function coverSvg(id: string, title: string): Promise<string> {
 
 export class Site {
   constructor(private db: Hrana, private dialect: Dialect = fts5, private banner = true, private debug = false,
-              private imageBase = "", private fetcher: typeof fetch = ((i: any, o?: any) => fetch(i, o)) as typeof fetch, private bannerText = "") {}
+              private imageBase = "", private fetcher: typeof fetch = ((i: any, o?: any) => fetch(i, o)) as typeof fetch, private bannerText = "",
+              private keysDb?: Hrana) {}
 
   static async create(env: Env, fetcher?: typeof fetch): Promise<Site> {
     const db = new Hrana(env.TURSO_URL, env.TURSO_TOKEN, fetcher, env.TABLE_PREFIX ?? "");
     let d = fts5;
     try { const r = await db.execute("SELECT v FROM meta WHERE k='fts_dialect'"); d = DIALECTS[String(r.rows[0]?.[0])] ?? fts5; } catch { /* default */ }
     return new Site(db, d, env.DEMO_BANNER !== "0", env.DEBUG_ERRORS === "1", (env.IMAGE_BASE ?? "").replace(/\/+$/, ""),
-      env.IMAGES ? (((u: any, o?: any) => env.IMAGES!.fetch(u, o)) as typeof fetch) : fetcher, env.BANNER_TEXT ?? "");
+      env.IMAGES ? (((u: any, o?: any) => env.IMAGES!.fetch(u, o)) as typeof fetch) : fetcher, env.BANNER_TEXT ?? "",
+      env.USAGE_URL ? new Hrana(env.USAGE_URL, env.USAGE_TOKEN, fetcher) : undefined);
   }
 
   async search(q = "", tag = "", artist = "", page = 1) {
@@ -122,7 +126,7 @@ export class Site {
   }
 
   private async api(req: Request, p: string, g: (k: string) => string): Promise<Response> {
-    const [status, reason, hdrs] = await check(this.db, req.headers.get("X-API-Key"));
+    const [status, reason, hdrs] = await check(this.keysDb ?? this.db, req.headers.get("X-API-Key"));
     if (status !== 200) return json(status, { error: reason }, hdrs);
     if (p === "/api/v1/search") {
       const page = g("page") ? Number(g("page")) : 1;
