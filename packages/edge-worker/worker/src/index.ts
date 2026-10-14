@@ -3,7 +3,17 @@ import { Hrana, rowsToDicts, Value } from "./db";
 import { DIALECTS, Dialect, fts5 } from "./dialect";
 import { check, sha256Hex } from "./keys";
 
-export interface Env { TURSO_URL: string; TURSO_TOKEN?: string; DEMO_BANNER?: string; DEBUG_ERRORS?: string }
+export interface Env {
+  TURSO_URL: string; TURSO_TOKEN?: string; DEMO_BANNER?: string; DEBUG_ERRORS?: string;
+  /** namespace for a shared DB, e.g. "ge_" */
+  TABLE_PREFIX?: string;
+  /** read-only image origin; /cover/<id> proxies GET <IMAGE_BASE>/img/<cover_key>?pack=<pack> */
+  IMAGE_BASE?: string;
+  /** banner text override (e.g. staging notice) */
+  BANNER_TEXT?: string;
+  /** optional service binding to the image worker (same-account workers.dev fetches are blocked by Cloudflare) */
+  IMAGES?: { fetch(input: string, init?: RequestInit): Promise<Response> };
+}
 
 const PAGE = 24;
 const CSS = `*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:#0f1115;color:#e6e6e6}
@@ -39,13 +49,15 @@ export async function coverSvg(id: string, title: string): Promise<string> {
 }
 
 export class Site {
-  constructor(private db: Hrana, private dialect: Dialect = fts5, private banner = true, private debug = false) {}
+  constructor(private db: Hrana, private dialect: Dialect = fts5, private banner = true, private debug = false,
+              private imageBase = "", private fetcher: typeof fetch = ((i: any, o?: any) => fetch(i, o)) as typeof fetch, private bannerText = "") {}
 
   static async create(env: Env, fetcher?: typeof fetch): Promise<Site> {
-    const db = new Hrana(env.TURSO_URL, env.TURSO_TOKEN, fetcher);
+    const db = new Hrana(env.TURSO_URL, env.TURSO_TOKEN, fetcher, env.TABLE_PREFIX ?? "");
     let d = fts5;
     try { const r = await db.execute("SELECT v FROM meta WHERE k='fts_dialect'"); d = DIALECTS[String(r.rows[0]?.[0])] ?? fts5; } catch { /* default */ }
-    return new Site(db, d, env.DEMO_BANNER !== "0", env.DEBUG_ERRORS === "1");
+    return new Site(db, d, env.DEMO_BANNER !== "0", env.DEBUG_ERRORS === "1", (env.IMAGE_BASE ?? "").replace(/\/+$/, ""),
+      env.IMAGES ? (((u: any, o?: any) => env.IMAGES!.fetch(u, o)) as typeof fetch) : fetcher, env.BANNER_TEXT ?? "");
   }
 
   async search(q = "", tag = "", artist = "", page = 1) {
@@ -87,7 +99,15 @@ export class Site {
       m = p.match(/^\/cover\/([\w-]+)\.svg$/);
       if (m) {
         const w = await this.work(m[1]);
-        return w ? resp(200, "image/svg+xml", await coverSvg(String(w.id), String(w.title)), { "Cache-Control": "public, max-age=86400" }) : resp(404, "text/plain", "not found");
+        if (!w) return resp(404, "text/plain", "not found");
+        if (this.imageBase && w.cover_key && /^[\w./-]+$/.test(String(w.cover_key)) && !String(w.cover_key).includes("..")) {
+          const pack = String(w.pack_id ?? "").replace(/^ge-/, "");
+          const up = await this.fetcher(`${this.imageBase}/img/${w.cover_key}?${qs({ pack })}`, { method: "GET" });
+          if (up.ok && /^image\//.test(up.headers.get("Content-Type") ?? "")) {
+            return new Response(up.body, { status: 200, headers: { "Content-Type": up.headers.get("Content-Type")!, "Cache-Control": "public, max-age=86400", ...SEC_HEADERS } });
+          }
+        }
+        return resp(200, "image/svg+xml", await coverSvg(String(w.id), String(w.title)), { "Cache-Control": "public, max-age=86400" });
       }
       return resp(404, "text/plain", "not found");
     } catch (e) {
@@ -110,7 +130,7 @@ export class Site {
   }
 
   layout(title: string, body: string, q = ""): string {
-    const banner = this.banner ? '<div class="banner">演示站：全部为合成数据 · Demo site — all data is synthetic</div>' : "";
+    const banner = this.bannerText ? `<div class="banner">${esc(this.bannerText)}</div>` : this.banner ? '<div class="banner">演示站：全部为合成数据 · Demo site — all data is synthetic</div>' : "";
     return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · GalleryEdge</title><style>${CSS}</style></head><body>${banner}<header><h1><a href="/">GalleryEdge</a> <small>边缘图阁</small></h1><form action="/"><input name="q" value="${esc(q)}" placeholder="搜索标题 / 提示词 / 标签 / 画师 · search"><button>搜索</button></form></header>${body}</body></html>`;
   }
 

@@ -51,14 +51,20 @@ class Backend(Protocol):
 
 
 class LocalBackend:
-    def __init__(self, id: str, root: str, tier: str = "hot"):
-        self.id, self.tier, self.root = id, tier, Path(root)
-        self.root.mkdir(parents=True, exist_ok=True)
+    def __init__(self, id: str, root: str, tier: str = "hot", *, read_only: bool = False):
+        self.id, self.tier, self.root, self.read_only = id, tier, Path(root), read_only
+        if not read_only:
+            self.root.mkdir(parents=True, exist_ok=True)
+
+    def _rw(self):
+        if self.read_only:
+            raise StorageError(f"{self.id}: read-only backend")
 
     def _p(self, key):
         return self.root / check_key(key)
 
     def put(self, key, data):
+        self._rw()
         p = self._p(key); p.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".put-")
         with os.fdopen(fd, "wb") as f:
@@ -76,6 +82,7 @@ class LocalBackend:
         return Head(p.stat().st_size, sha(p.read_bytes())) if p.is_file() else None
 
     def delete(self, key):
+        self._rw()
         self._p(key).unlink(missing_ok=True)
 
     def list(self, prefix=""):
@@ -331,7 +338,7 @@ def make_backend(b: dict, vault=None, *, client_factory=None):
     (a vault entry holding JSON {"access_key_id": ..., "secret_access_key": ...})."""
     t = b["type"]
     if t == "local":
-        return LocalBackend(b["id"], b["path"], b.get("tier", "hot"))
+        return LocalBackend(b["id"], b["path"], b.get("tier", "hot"), read_only=bool(b.get("read_only")))
     if t in ("s3", "r2"):
         if not b.get("bucket"):
             raise StorageError(f"{b['id']}: bucket required")

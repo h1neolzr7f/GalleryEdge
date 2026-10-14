@@ -1,0 +1,19 @@
+# Staging worker template: a NEW worker name next to (never replacing) an existing site.
+name = "galleryedge-staging"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+workers_dev = true
+
+[vars]
+TABLE_PREFIX = "ge_"                         # GalleryEdge tables live as ge_* inside a shared DB
+IMAGE_BASE = "https://<existing-image-worker>.workers.dev"
+BANNER_TEXT = "GalleryEdge 预发布（staging）"
+DEMO_BANNER = "0"
+
+# Same-account workers.dev subrequests are blocked by Cloudflare, so reach the existing
+# image worker through a service binding (GET /img only; read-only).
+[[services]]
+binding = "IMAGES"
+service = "<existing-image-worker>"
+
+# secrets: wrangler secret put TURSO_URL / TURSO_TOKEN  (pipe from a file; never echo)

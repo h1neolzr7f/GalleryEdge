@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sqlite3
 import urllib.error
 import urllib.request
@@ -180,7 +181,40 @@ def split_sql(script: str) -> list[str]:
     return out
 
 
-def connect(url: str, auth_token: str | None = None):
-    if url.startswith(("libsql://", "http://", "https://")):
-        return HranaClient(url, auth_token)
-    return SqliteClient(url)
+def connect(url: str, auth_token: str | None = None, *, prefix: str = ""):
+    c = HranaClient(url, auth_token) if url.startswith(("libsql://", "http://", "https://")) else SqliteClient(url)
+    return PrefixedClient(c, prefix) if prefix else c
+
+
+GE_TABLES = ("works_fts_idx", "works_fts", "works_ai", "works_ad", "works_au", "works", "work_tags", "idx_work_tags_tag", "idx_works_artist",
+             "api_plans", "api_keys", "usage_daily", "usage_minute", "meta")
+_PREFIX_RE = re.compile(r"\b(" + "|".join(GE_TABLES) + r")\b")
+
+
+def prefix_sql(sql: str, prefix: str) -> str:
+    """Namespace every GalleryEdge table/index/trigger name, so GalleryEdge can live in a shared DB
+    (e.g. ``ge_works``) without ever touching existing tables of the same name."""
+    if not prefix:
+        return sql
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,15}_", prefix):
+        raise ValueError("table prefix must look like 'ge_'")
+    return _PREFIX_RE.sub(lambda m: prefix + m.group(1), sql)
+
+
+class PrefixedClient:
+    def __init__(self, inner, prefix: str):
+        if prefix and not re.fullmatch(r"[a-z][a-z0-9_]{0,15}_", prefix):
+            raise ValueError("table prefix must look like 'ge_'")
+        self.inner, self.prefix = inner, prefix
+
+    def __repr__(self) -> str:
+        return f"PrefixedClient({self.inner!r}, {self.prefix!r})"
+
+    def execute(self, sql, args=()):
+        return self.inner.execute(prefix_sql(sql, self.prefix), args)
+
+    def batch(self, items, transactional: bool = True):
+        return self.inner.batch([(prefix_sql(s, self.prefix), a) for s, a in items], transactional)
+
+    def executescript(self, script: str) -> None:
+        self.inner.executescript(prefix_sql(script, self.prefix))

@@ -25,9 +25,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ge-ingest", description="verify and ingest site-pack-v1 tars")
     ap.add_argument("--db", default="file:./var/demo.db")
     ap.add_argument("--panel-db", help="panel DB (file:...) to receive Turso row metering + ingest events")
+    ap.add_argument("--table-prefix", default=os.environ.get("GE_TABLE_PREFIX", ""), help="namespace tables, e.g. ge_ (for a shared DB)")
     ap.add_argument("packs", nargs="+")
     a = ap.parse_args(argv)
-    db = C.connect(a.db, os.environ.get("GE_LIBSQL_TOKEN"))
+    db = C.connect(a.db, os.environ.get("GE_LIBSQL_TOKEN"), prefix=a.table_prefix)
     schema.init(db, dialect.detect(db))
     conn = None
     if a.panel_db:

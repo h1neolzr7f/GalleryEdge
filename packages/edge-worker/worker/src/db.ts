@@ -1,3 +1,4 @@
+import { prefixSql } from "./text";
 // Turso/libSQL Hrana v2 over HTTP (POST /v2/pipeline) using fetch only.
 export type Value = null | number | bigint | string | Uint8Array;
 export interface Result { columns: string[]; rows: Value[][] }
@@ -25,7 +26,8 @@ function dec(v: HVal): Value {
 
 export class Hrana {
   private base: string;
-  constructor(url: string, private token?: string, private fetcher: typeof fetch = ((i: any, o?: any) => fetch(i, o)) as typeof fetch) {
+  constructor(url: string, private token?: string, private fetcher: typeof fetch = ((i: any, o?: any) => fetch(i, o)) as typeof fetch, private prefix = "") {
+    prefixSql("", prefix);
     let u = url.replace(/^libsql:\/\//, "https://");
     if (/^https:\/\/(127\.0\.0\.1|localhost)/.test(u)) u = "http://" + u.slice(8);
     this.base = u.replace(/\/+$/, "");
@@ -50,14 +52,14 @@ export class Hrana {
   }
 
   async execute(sql: string, args: Value[] = []): Promise<Result> {
-    const [r] = await this.post([{ type: "execute", stmt: { sql, args: args.map(enc) } }]);
+    const [r] = await this.post([{ type: "execute", stmt: { sql: prefixSql(sql, this.prefix), args: args.map(enc) } }]);
     return Hrana.result(r.result);
   }
 
   /** Transactional batch: each step conditional on the previous one, rollback on failure. */
   async batch(items: [string, Value[]][]): Promise<Result[]> {
     const steps: any[] = [{ stmt: { sql: "BEGIN" } }];
-    items.forEach(([sql, args], k) => steps.push({ stmt: { sql, args: args.map(enc) }, condition: { type: "ok", step: k } }));
+    items.forEach(([sql, args], k) => steps.push({ stmt: { sql: prefixSql(sql, this.prefix), args: args.map(enc) }, condition: { type: "ok", step: k } }));
     const n = steps.length;
     steps.push({ stmt: { sql: "COMMIT" }, condition: { type: "ok", step: n - 1 } });
     steps.push({ stmt: { sql: "ROLLBACK" }, condition: { type: "not", cond: { type: "ok", step: n } } });

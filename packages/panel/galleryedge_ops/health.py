@@ -41,6 +41,10 @@ def probe_local(b: dict) -> ProbeResult:
     t = time.monotonic()
     if not p.is_dir():
         return ProbeResult(b["id"], "local", False, "path missing or not a directory")
+    if b.get("read_only"):  # observe only: never create files in someone else's directory
+        ok = os.access(p, os.R_OK | os.X_OK)
+        return ProbeResult(b["id"], "local", ok, "ok (read-only observe)" if ok else "not readable", int((time.monotonic() - t) * 1000),
+                           _dir_size(p), b.get("quota_bytes"), {"disk_free_bytes": shutil.disk_usage(p).free, "read_only": True})
     probe = p / f".ge-probe-{uuid.uuid4().hex}"
     try:
         probe.write_bytes(b"ok")
