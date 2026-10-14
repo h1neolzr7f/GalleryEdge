@@ -89,3 +89,9 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
 - 度量（`python tools/zh_relevance.py`，含“温和服务/和服”“明天鹅毛/天鹅”等边界陷阱的标注集）：
   单字：P@1 0.857 · MRR 0.929 · R-precision 0.786 · 召回 1.0；jieba+单字：P@1 0.857 · MRR 0.929 · **R-precision 0.857** · 召回 1.0。
 - 旧数据迁移：`ge-ingest --db ... --token-file ... --refresh-search-text`（只写变化行）。
+## 敏感词过滤去误伤（polish-9）
+- HARD（任何字段都拦）：旗帜/纹章/徽章/地图/政治人物/抗议/军事/战争/宗教人物等，全部整词匹配（`communis` 不再误伤 *Pyrus communis*，`religio` 不再误伤 *religiosum*，`army ants` 放行）。
+- 涉华地区名（China/Taiwan/Hong Kong/Tibet/Xinjiang/Macau + 中文）：保守，任何字段都拦。
+- 其它国家名：在“X of 国家”这类地理索引分类里忽略（如 *Hymenoptera of Israel*），出现在标题/描述时需有自然主题词才放行。
+- 寺庙/教堂/边界/政党/游行：作为分类主题时拦；出现在标题中需自然主题词才放行。
+- 新增 `ge-crawl --seed-file`：用新规则重新抓取旧规则下被拦的页面。

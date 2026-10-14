@@ -294,6 +294,20 @@ class Crawler:
         return Skip("too-many-redirects")
 
     # --- main loop ---
+    def seed(self, urls) -> int:
+        """Queue specific URLs (e.g. pages skipped under an older filter) instead of the adapter's start URLs."""
+        n = 0
+        for u in urls:
+            u = canonical(u.strip())
+            if not u:
+                continue
+            self.st.db.execute("DELETE FROM seen WHERE url=?", (u,)); self.st.db.execute("DELETE FROM skips WHERE url=?", (u,))
+            self.st.push(u); n += 1
+        if not self.st.counter("started"):
+            self.st.counter("started", 1)
+        self.st.db.commit()
+        return n
+
     def run_incremental(self, since: str | None = None) -> dict:
         """Re-fetch pages seen before `since` with If-None-Match/If-Modified-Since; 304 => skipped as not-modified,
         changed records are re-emitted, unchanged ones are dropped (stats: unchanged/updated)."""

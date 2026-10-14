@@ -37,15 +37,59 @@ SFW_CATEGORIES = (
 BLOCK = re.compile(r"nud|naked|erotic|sexual|\bsex\b|porn|genital|breast|nipple|lingerie|underwear|bikini|topless|corpse|dead bod|"
                    r"cadaver|shunga|bijin-?ga|bathing|bather|sweat in art|swimsuit|gore|blood|execution|wound|injur|war crime|massacre|autopsy|surgery|medical|penis|vagina|buttock|"
                    r"裸|色情|尸|血", re.I)
-# politically sensitive: flags, heraldry, emblems, maps/borders, politicians, protests, military, religion-politics
-SENSITIVE = re.compile(
-    r"\bflags?\b|flag of|旗|coats? of arms|heraldry|\bemblems?\b|\bseals? of\b|insignia|徽|\bmaps?\b|地图|cartograph|\bborders?\b|"
-    r"boundar|territor|disputed|sovereign|annex|occupied|\bpolitic|politician|president|prime minister|chairman|dictator|\bparty\b|"
-    r"communis|nationalis|propaganda|parliament|congress|election|protest|demonstrat|\briot|revolution|\bwar\b|battle|military|"
-    r"\barmy\b|\bnavy\b|soldier|weapon|tank\b|missile|warship|aircraft carrier|parade|memorial to|martyr|genocide|regime|"
-    r"religio|mosque|cathedral|\bchurch|temple|shrine|monaster|pagoda|\bpope\b|dalai lama|\blamas?\b|"
-    r"\bchina\b|chinese|taiwan|hong kong|macau|tibet|xinjiang|\bjapan|korea|russia|ukrain|israel|palestin|iran\b|"
-    r"中国|中华|台湾|台灣|香港|澳门|西藏|新疆|日本|朝鲜|韩国|總統|总统|政治|军|战|宗教", re.I)
+# politically sensitive (polish-9: whole words + context instead of substrings)
+# HARD: always blocks, in any field (title, description, categories/tags)
+HARD = re.compile(
+    r"\bflags?\b|flag of|旗|coats? of arms|heraldry|\bemblems?\b|\bseals? of\b|\binsignia\b|徽|\bmaps?\b|地图|cartograph|"
+    r"\bdisputed\b|\bsovereign|\bannex(ed|ation)?\b|\boccupied territor|\bpolitic(s|al|ian|ians)?\b|\bpresident\b|prime minister|"
+    r"\bchairman\b|\bdictator|\bcommunis[mt]s?\b|communist party|\bnationalis[mt]s?\b|propaganda|\bparliament|\bcongress\b|"
+    r"\belections?\b|\bprotest(s|ers?)?\b|\bdemonstrat(ion|ors?)s?\b(?! of)|\briots?\b|\brevolution(ary)?\b|\bwars?\b|\bbattle(s|field)?\b|"
+    r"\bmilitary\b|\barmy\b(?! ants?)|\bnavy\b|\bsoldiers?\b|\bweapons?\b|\bmissiles?\b|\bwarships?\b|aircraft carrier|"
+    r"memorial to|\bmartyrs?\b|genocide|\bregime\b|\bpope\b|dalai lama|\blamas?\b|\bbuddha\b|\bjesus\b|\bchrist\b|\ballah\b|"
+    r"\breligio(n|ns|us)\b|\bmosques?\b|"
+    r"中国|中华|台湾|台灣|香港|澳门|西藏|新疆|總統|总统|政治|宗教|军事|军队|解放军|战争|战役|抗战", re.I)
+# China-related region names: block in title/description; ignored only inside geo-index categories ("Flora of Hong Kong")
+REGION_CN = re.compile(r"\bchina\b|\bchinese\b|\btaiwan(ese)?\b|hong kong|\bmacau\b|\btibet(an)?\b|\bxinjiang\b", re.I)
+# SOFT_REGION: other country names — fine inside geo-index categories ("Hymenoptera of Israel"); in title/desc need nature context
+SOFT_REGION = re.compile(
+    r"\bjapan(ese)?\b|\bkorea(n)?\b|\brussia(n)?\b|\bukrain(e|ian)\b|\bisrael(i)?\b|\bpalestin(e|ian)\b|\biran(ian)?\b|\bcrimea\b|"
+    r"日本|朝鲜|韩国", re.I)
+# SOFT_TOPIC: borders, parties, religious buildings... — block as a category topic; in title/desc need nature context
+SOFT_TOPIC = re.compile(
+    r"\bborders?\b|\bboundar(y|ies)\b|\bterritor(y|ies|ial)\b|\bparty\b|\bparades?\b|\bcathedrals?\b|\bchurch(es)?\b|"
+    r"\btemples?\b|\bshrines?\b|\bmonaster(y|ies)\b|\bpagodas?\b", re.I)
+NATURE = re.compile(
+    r"\b(flowers?|flora|plants?|trees?|leaf|leaves|blossoms?|blooming|bloom|bouquet|garden|pine|maple|moss|ferns?|orchids?|"
+    r"birds?|insects?|bees?|wasps?|ants?|butterfl(y|ies)|moths?|beetles?|dragonfl(y|ies)|spiders?|fung(i|us)|mushrooms?|lichens?|"
+    r"cats?|kittens?|dogs?|fish|frogs?|lizards?|snakes?|turtles?|deer|squirrels?|"
+    r"landscape|waterfalls?|lakes?|rivers?|mountains?|clouds?|sunset|sunrise|sky|beach|coast|sea|forest|snow|ice|autumn|spring)\b|"
+    r"花|鸟|蝴蝶|昆虫|猫|狗|树|叶|山|湖|海|云", re.I)
+GEO_CAT = re.compile(r"\b(of|in|from)\b", re.I)
+
+
+def sensitive_reason(title: str, desc: str = "", cats=()) -> str | None:
+    """None if OK, else a short reason. Hard terms block anywhere; region/soft terms are judged in context."""
+    cats = [c.replace("_", " ") for c in cats]
+    text = " ".join([title or "", desc or ""])
+    for c in [text, *cats]:
+        m = HARD.search(c)
+        if m:
+            return f"hard:{m.group(0).lower()}"
+    for c in [text, *cats]:  # China-related regions: conservative, block anywhere
+        m = REGION_CN.search(c)
+        if m:
+            return f"region:{m.group(0).lower()}"
+    for c in cats:
+        m = SOFT_TOPIC.search(c) or (SOFT_REGION.search(c) if not GEO_CAT.search(c) else None)
+        if m:
+            return f"category:{m.group(0).lower()}"
+    m = SOFT_TOPIC.search(text) or SOFT_REGION.search(text)
+    if m and not NATURE.search(text):
+        return f"soft:{m.group(0).lower()}"
+    return None
+
+
+SENSITIVE = HARD  # backwards-compatible name (hard terms)
 
 LICENSE_OK = re.compile(r"^(cc0( 1\.0)?|public domain|pd(-.*)?|cc by( \d\.\d)?( [a-z]{2,})?|cc by-sa( \d\.\d)?( [a-z]{2,})?)$", re.I)
 # tiny glossary so Chinese queries work on English-language metadata (added as zh tags, marked in rights_note)
@@ -113,7 +157,7 @@ def normalize_record(r: dict) -> dict:
 def sfw_ok(record: dict) -> bool:
     """Re-check an already-collected record against the (possibly updated) block-list."""
     hay = " ".join([record.get("title", ""), record.get("prompt", ""), *record.get("tags", [])])
-    return not BLOCK.search(hay) and not SENSITIVE.search(hay)
+    return not BLOCK.search(hay) and sensitive_reason(record.get("title", ""), record.get("prompt", ""), record.get("tags", [])) is None
 
 
 def thumb_url(og_image: str, width: int = 500) -> str | None:
@@ -170,7 +214,7 @@ class CommonsAdapter:
         name = unquote(path[len("/wiki/File:"):]).replace("_", " ")
         if BLOCK.search(" ".join([name, desc_en, desc_zh, *cats])):
             yield Skip("sfw-blocked"); return
-        if SENSITIVE.search(" ".join([name, desc_en, desc_zh, *cats])):
+        if sensitive_reason(name, " ".join([desc_en, desc_zh]), cats):
             yield Skip("sensitive-blocked"); return
         og = re.search(r'<meta property="og:image" content="([^"]+)"', doc)
         cover = thumb_url(og.group(1)) if og else None

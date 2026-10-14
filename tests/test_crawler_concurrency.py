@@ -88,3 +88,13 @@ def test_cli_recrawl_synthetic(tmp_path, capsys):
     assert main(args) == 0; first = json.loads(capsys.readouterr().out)
     assert main(args + ["--recrawl", "--concurrency", "2"]) == 0; again = json.loads(capsys.readouterr().out)
     assert first["records"] > 0 and again["records"] == 0 and again.get("unchanged", 0) == first["records"]
+
+
+def test_seed_revisits_previously_skipped(tmp_path):
+    st, out = str(tmp_path / "s.db"), str(tmp_path / "o")
+    Crawler(Adapter(["a.invalid"], 2), cfg(), state_path=st, out_dir=out, fetcher=Fetcher()).run()
+    c = Crawler(Adapter(["a.invalid"], 2), cfg(), state_path=st, out_dir=out, fetcher=Fetcher(body="v9", etag='"z"'))
+    c.recrawl = True
+    assert c.seed(["https://a.invalid/item/1"]) == 1
+    r = c.run()
+    assert r["fetched"] == 1 and r["records"] == 1
