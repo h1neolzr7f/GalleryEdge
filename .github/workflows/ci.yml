@@ -51,7 +51,7 @@ jobs:
       - name: start MinIO
         if: matrix.server == 'minio'
         run: |
-          docker run -d -p 9000:9000 -e MINIO_ROOT_USER=$GE_TEST_S3_KEY -e MINIO_ROOT_PASSWORD=$GE_TEST_S3_SECRET minio/minio server /data
+          docker run -d -p 9000:9000 -e MINIO_ROOT_USER=$GE_TEST_S3_KEY -e MINIO_ROOT_PASSWORD=$GE_TEST_S3_SECRET quay.io/minio/minio server /data
           for i in $(seq 60); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
       - name: start moto S3 server
         if: matrix.server == 'moto'
