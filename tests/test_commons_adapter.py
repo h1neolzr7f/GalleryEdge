@@ -209,8 +209,8 @@ def test_empty_category_is_reported():
 
 
 def test_llama_not_lama():
-    from galleryedge_adapters.commons import SENSITIVE
-    assert not SENSITIVE.search("FAKE llama in the hills") and SENSITIVE.search("FAKE lama prays")
+    from galleryedge_adapters.commons import sensitive_reason
+    assert sensitive_reason("FAKE llama in the hills") is None and sensitive_reason("FAKE lama prays") is not None
 
 
 def test_cli_categories(capsys):
@@ -291,3 +291,14 @@ def test_subcategory_descent_bounded_and_filtered():
     assert not [x for x in a.parse(Response(u2, 200, {}, html.encode())) if isinstance(x, Link) and "Category:" in x.url]
     # default: no descent
     assert not [x for x in CommonsAdapter(["Quality_images_of_flowers"]).parse(Response(u, 200, {}, html.encode())) if "Category:" in getattr(x, "url", "")]
+
+
+@pytest.mark.parametrize("title,desc,ok", [
+    ("Llama (Lama glama), Tierpark Hellabrunn", "", True),
+    ("Lama, Ipiales, Colombia", "A llama in the Andes", True),   # genus name + animal context
+    ("Lama teaching at a monastery", "", False),                 # Tibetan lama, no nature context
+    ("Portrait of the Dalai Lama", "", False),
+])
+def test_lama_genus_vs_title(title, desc, ok):
+    from galleryedge_adapters.commons import sensitive_reason
+    assert (sensitive_reason(title, desc) is None) is ok
