@@ -25,7 +25,7 @@ function dec(v: HVal): Value {
 
 export class Hrana {
   private base: string;
-  constructor(url: string, private token?: string, private fetcher: typeof fetch = fetch) {
+  constructor(url: string, private token?: string, private fetcher: typeof fetch = ((i: any, o?: any) => fetch(i, o)) as typeof fetch) {
     let u = url.replace(/^libsql:\/\//, "https://");
     if (/^https:\/\/(127\.0\.0\.1|localhost)/.test(u)) u = "http://" + u.slice(8);
     this.base = u.replace(/\/+$/, "");
