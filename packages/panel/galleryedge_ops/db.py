@@ -19,6 +19,13 @@ MIGRATIONS: list[tuple[int, str]] = [
         level TEXT NOT NULL, message TEXT NOT NULL, acked INTEGER DEFAULT 0, delivered TEXT);
     CREATE INDEX IF NOT EXISTS idx_alerts_key ON alerts(key, ts);
     """),
+    (2, """
+    CREATE TABLE IF NOT EXISTS packs(pack_id TEXT PRIMARY KEY, stage TEXT NOT NULL, status TEXT NOT NULL,
+        progress REAL NOT NULL DEFAULT 0, backend_id TEXT, bytes_local INTEGER DEFAULT 0, bytes_remote INTEGER DEFAULT 0,
+        checksum TEXT, error TEXT, attempts INTEGER NOT NULL DEFAULT 0, checkpoint_json TEXT,
+        started_at TEXT, updated_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_packs_status ON packs(status);
+    """),
 ]
 
 
@@ -30,7 +37,7 @@ def connect(url: str, auth_token: str | None = None):
             raise RuntimeError("install galleryedge[libsql] for remote Turso URLs") from e
         return libsql.connect(database=url, auth_token=auth_token or "")
     path = url[5:] if url.startswith("file:") else url
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL") if path != ":memory:" else None
     return conn
 

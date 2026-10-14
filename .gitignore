@@ -11,3 +11,4 @@ build/
 *.key
 .env
 node_modules/
+packages/panel/web/dist/

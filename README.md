@@ -45,6 +45,18 @@ curl -H "X-API-Key: $(cat my.key)" "http://127.0.0.1:8787/api/v1/search?q=harbor
 ![首页](docs/screenshots/galleryedge-home.png)
 ![作品页](docs/screenshots/galleryedge-work.png)
 
+### 运维面板（Phase 3，仅本机）
+```bash
+pip install -e ".[panel]"
+(cd packages/panel/web && npm ci && npm run build)
+ge-panel --config config.json --demo   # http://127.0.0.1:8790 ，--demo 写入合成的包任务/告警/事件
+```
+页面：状态总览（后端、包任务、告警、即将到期凭据、最近事件，一键健康检查）、包任务看板（每包阶段条、失败一键重试、暂停/继续、二次确认跳过）、告警确认、清理（先预览 dry-run，勾选确认后才执行，预览后文件有变化会拒绝执行）、事件日志筛选。默认只读观察：配置 `panel.takeover: true` 才能改包任务。只接受本机连接，写操作需要 `X-GE-Panel` 头防跨站。Cloudflare Worker（TypeScript）在 `packages/edge-worker/worker`。
+
+![面板状态](docs/screenshots/panel-status.png)
+![包任务](docs/screenshots/panel-packs.png)
+![清理预览](docs/screenshots/panel-cleanup.png)
+
 路线图见 [docs/ROADMAP.md](docs/ROADMAP.md)，架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ---
