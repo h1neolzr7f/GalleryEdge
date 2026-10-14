@@ -48,3 +48,13 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
 8. 中文词表漏掉了复数形式（volcanoes）→ 改用 `(?:e?s)?` 匹配。
 9. SFW 规则收紧后可以离线复核（`sfw_ok`），新增屏蔽词 shunga、bijin-ga、bathing 等。
 - 已知限制：Commons 分类页的翻页链接在 `/w/index.php` 下，被 robots 禁止，所以每个分类最多只能拿到 200 个文件；要多抓只能增加白名单分类。
+
+## Phase 7d — 排除政治敏感内容
+- 新增 `SENSITIVE` 屏蔽规则（旗帜、纹章/徽章、地图/边界/领土、政治人物/政党/选举、抗议、军事/战争、宗教场所与宗教政治、国家/地区名），抓取时生效（`sensitive-blocked`），也可以用 `sfw_ok` 离线复核。
+- 白名单去掉了国家/地区分类，改为中性主题：猫、狗、食物、水果、建筑、建筑细节、云、瀑布、海滩、自然、植物、真菌、鳞翅目、树、湖、日落、爬行动物。
+- 实测中修复：
+  10. 分类拼错或为空时以前什么都不输出，现在报 `empty-category`。
+  11. 新增 `--categories` 和 `--list-categories`，可以只抓白名单的一部分。
+  12. FTS5 列名 `tags` 和 content 表的 `tags_text` 对不上，导致读 FTS 行时报错（MATCH 不受影响）→ 修正列名，并新增 `schema.rebuild_fts()` 用来迁移已有库。
+  13. 屏蔽词 `lama` 误伤 llama → 改成按词边界匹配。
+  14. 作者字段混进上传工具说明（"This file was uploaded with Commonist"）→ 截掉。

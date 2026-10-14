@@ -19,16 +19,16 @@ class Fts5Dialect:
 
     def ddl(self) -> str:
         return """
-CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(title, prompt, tags, artist, search_text, content='works', content_rowid='rowid', tokenize='unicode61');
+CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(title, prompt, tags_text, artist, search_text, content='works', content_rowid='rowid', tokenize='unicode61');
 CREATE TRIGGER IF NOT EXISTS works_ai AFTER INSERT ON works BEGIN
-  INSERT INTO works_fts(rowid,title,prompt,tags,artist,search_text) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist,new.search_text);
+  INSERT INTO works_fts(rowid,title,prompt,tags_text,artist,search_text) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist,new.search_text);
 END;
 CREATE TRIGGER IF NOT EXISTS works_ad AFTER DELETE ON works BEGIN
-  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags,artist,search_text) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist,old.search_text);
+  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags_text,artist,search_text) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist,old.search_text);
 END;
 CREATE TRIGGER IF NOT EXISTS works_au AFTER UPDATE ON works BEGIN
-  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags,artist,search_text) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist,old.search_text);
-  INSERT INTO works_fts(rowid,title,prompt,tags,artist,search_text) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist,new.search_text);
+  INSERT INTO works_fts(works_fts,rowid,title,prompt,tags_text,artist,search_text) VALUES ('delete',old.rowid,old.title,old.prompt,old.tags_text,old.artist,old.search_text);
+  INSERT INTO works_fts(rowid,title,prompt,tags_text,artist,search_text) VALUES (new.rowid,new.title,new.prompt,new.tags_text,new.artist,new.search_text);
 END;
 """
 

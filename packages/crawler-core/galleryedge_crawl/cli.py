@@ -15,7 +15,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="ge-crawl")
     ap.add_argument("--adapter", choices=sorted(ADAPTERS), required=True)
     ap.add_argument("--base", default="http://127.0.0.1:8788", help="demo-selfhost base URL")
-    ap.add_argument("--contact", required=True, help="your email or URL (goes into the User-Agent)")
+    ap.add_argument("--contact", default="", help="your email or URL (goes into the User-Agent)")
     ap.add_argument("--out", default="./var/packs")
     ap.add_argument("--state", default="./var/crawl-state.db")
     ap.add_argument("--min-interval", type=float, default=1.0)
@@ -23,6 +23,8 @@ def main(argv=None) -> int:
     ap.add_argument("--pack-size", type=int, default=500)
     ap.add_argument("--panel-db", help="panel DB (file:...) to receive crawler.* events for the ops panel")
     ap.add_argument("--fetch-media", action="store_true", help="also download media (off by default: metadata only)")
+    ap.add_argument("--categories", help="wikimedia-commons: comma-separated subset of the built-in SFW allow-list")
+    ap.add_argument("--list-categories", action="store_true", help="wikimedia-commons: print the allow-list and exit")
     ap.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
     ap.add_argument("--progress-every", type=int, default=50, help="print a progress line every N pages (stderr)")
     a = ap.parse_args(argv)
@@ -31,9 +33,20 @@ def main(argv=None) -> int:
     elif a.adapter == "wikimedia-commons":
         if a.min_interval < 1.0:
             ap.error("wikimedia-commons: --min-interval must be >= 1.0 (Wikimedia etiquette)")
-        adapter, fetcher, hosts = ADAPTERS["wikimedia-commons"](), None, ["commons.wikimedia.org"]
+        from galleryedge_adapters.commons import SFW_CATEGORIES
+        if a.list_categories:
+            print("\n".join(SFW_CATEGORIES)); return 0
+        cats = [c.strip() for c in a.categories.split(",") if c.strip()] if a.categories else list(SFW_CATEGORIES)
+        try:
+            adapter = ADAPTERS["wikimedia-commons"](cats)
+        except ValueError as e:
+            ap.error(f"{e} (see --list-categories)")
+        fetcher, hosts = None, ["commons.wikimedia.org"]
     else:
         adapter, fetcher, hosts = ADAPTERS["demo-selfhost"](a.base), None, [urlsplit(a.base).netloc]
+    if a.list_categories:
+        from galleryedge_adapters.commons import SFW_CATEGORIES
+        print("\n".join(SFW_CATEGORIES)); return 0
     try:
         CrawlConfig(contact=a.contact, allowed_hosts=[]).user_agent()
     except ValueError:

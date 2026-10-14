@@ -123,3 +123,15 @@ def test_panel_observes_read_only_backend(tmp_path):
     snap = cl.post("/api/costs/snapshot", headers=H, json={}).json()
     assert any(m["meter"] == "bytes:aitag-real" and m["value"] == 2 for m in snap["meters"])
     assert sorted(p.name for p in d.iterdir()) == ["packed_works.txt"]
+
+
+def test_fts_readable_and_rebuild(tmp_path):
+    db = connect(f"file:{tmp_path}/r.db")
+    d = dialect.detect(db); schema.init(db, d)
+    schema.ingest(db, [{"id": "a1", "title": "FAKE 湖", "source_url": "https://x.invalid/a", "license": "CC0", "rating": "general", "tags": ["Blue sky"]}])
+    assert db.execute("SELECT count(*), max(tags_text) FROM works_fts").rows == [(1, "Blue sky")]  # content columns resolve
+    assert schema.rebuild_fts(db, d) == 1
+    s, a = d.search_sql("湖")
+    assert [r[0] for r in db.execute(s, a).rows] == ["a1"]
+    db.execute("DELETE FROM works WHERE id='a1'")
+    assert db.execute(s, a).rows == []

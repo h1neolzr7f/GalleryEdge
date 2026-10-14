@@ -20,22 +20,38 @@ from galleryedge_crawl import Link, Record, Response, Skip
 
 HOST = "commons.wikimedia.org"
 SFW_CATEGORIES = (
+    # neutral subjects only: no country/region categories (they pull in flags, maps, politics)
     "Featured_pictures_of_landscapes", "Featured_pictures_of_mountains", "Featured_pictures_of_bodies_of_water",
     "Featured_pictures_of_forests", "Featured_pictures_of_coasts", "Featured_pictures_of_volcanoes",
     "Featured_pictures_of_caves", "Featured_pictures_of_gardens", "Featured_pictures_of_parks", "Featured_pictures_of_islands",
-    "Featured_pictures_of_China", "Featured_pictures_of_Japan", "Featured_pictures_of_Taiwan", "Featured_pictures_of_Hong_Kong",
     "Featured_pictures_of_birds", "Featured_pictures_of_flowers", "Featured_pictures_of_lighthouses", "Featured_pictures_of_bridges",
+    "Featured_pictures_of_cats", "Featured_pictures_of_dogs", "Featured_pictures_of_food", "Featured_pictures_of_fruit",
+    "Featured_pictures_of_architecture", "Featured_pictures_of_architectural_elements", "Featured_pictures_of_clouds",
+    "Featured_pictures_of_waterfalls", "Featured_pictures_of_beaches", "Featured_pictures_of_nature", "Featured_pictures_of_plants",
+    "Featured_pictures_of_fungi", "Featured_pictures_of_Lepidoptera", "Featured_pictures_of_trees", "Featured_pictures_of_lakes",
+    "Featured_pictures_of_sunsets", "Featured_pictures_of_reptiles",
 )
 BLOCK = re.compile(r"nud|naked|erotic|sexual|\bsex\b|porn|genital|breast|nipple|lingerie|underwear|bikini|topless|corpse|dead bod|"
                    r"cadaver|shunga|bijin-?ga|bathing|bather|sweat in art|swimsuit|gore|blood|execution|wound|injur|war crime|massacre|autopsy|surgery|medical|penis|vagina|buttock|"
                    r"裸|色情|尸|血", re.I)
+# politically sensitive: flags, heraldry, emblems, maps/borders, politicians, protests, military, religion-politics
+SENSITIVE = re.compile(
+    r"\bflags?\b|flag of|旗|coats? of arms|heraldry|\bemblems?\b|\bseals? of\b|insignia|徽|\bmaps?\b|地图|cartograph|\bborders?\b|"
+    r"boundar|territor|disputed|sovereign|annex|occupied|\bpolitic|politician|president|prime minister|chairman|dictator|\bparty\b|"
+    r"communis|nationalis|propaganda|parliament|congress|election|protest|demonstrat|\briot|revolution|\bwar\b|battle|military|"
+    r"\barmy\b|\bnavy\b|soldier|weapon|tank\b|missile|warship|aircraft carrier|parade|memorial to|martyr|genocide|regime|"
+    r"religio|mosque|cathedral|\bchurch|temple|shrine|monaster|pagoda|\bpope\b|dalai lama|\blamas?\b|"
+    r"\bchina\b|chinese|taiwan|hong kong|macau|tibet|xinjiang|\bjapan|korea|russia|ukrain|israel|palestin|iran\b|"
+    r"中国|中华|台湾|台灣|香港|澳门|西藏|新疆|日本|朝鲜|韩国|總統|总统|政治|军|战|宗教", re.I)
+
 LICENSE_OK = re.compile(r"^(cc0( 1\.0)?|public domain|pd(-.*)?|cc by( \d\.\d)?( [a-z]{2,})?|cc by-sa( \d\.\d)?( [a-z]{2,})?)$", re.I)
 # tiny glossary so Chinese queries work on English-language metadata (added as zh tags, marked in rights_note)
 ZH = {"landscape": "风景", "mountain": "山", "lake": "湖", "river": "河流", "waterfall": "瀑布", "sea": "海", "coast": "海岸",
       "beach": "海滩", "forest": "森林", "tree": "树", "volcano": "火山", "cave": "洞穴", "garden": "花园", "park": "公园",
-      "island": "岛屿", "bird": "鸟", "flower": "花", "lighthouse": "灯塔", "bridge": "桥", "temple": "寺庙", "snow": "雪",
-      "sunset": "日落", "sunrise": "日出", "night": "夜景", "city": "城市", "china": "中国", "japan": "日本", "taiwan": "台湾",
-      "hong kong": "香港", "desert": "沙漠", "glacier": "冰川", "valley": "山谷", "sky": "天空", "cloud": "云"}
+      "island": "岛屿", "bird": "鸟", "flower": "花", "lighthouse": "灯塔", "bridge": "桥", "snow": "雪",
+      "sunset": "日落", "sunrise": "日出", "night": "夜景", "city": "城市", "desert": "沙漠", "glacier": "冰川", "valley": "山谷", "sky": "天空", "cloud": "云", "cat": "猫", "dog": "狗", "food": "美食", "fruit": "水果", "fungus": "真菌", "mushroom": "蘑菇",
+      "butterfly": "蝴蝶", "moth": "蛾", "insect": "昆虫", "architecture": "建筑", "autumn": "秋天", "reptile": "爬行动物", "plant": "植物",
+      "leaf": "叶子", "star": "星空", "milky way": "银河"}
 
 CAT_FILE_RE = re.compile(r'<a href="(/wiki/File:[^"#?]+)"')
 CATLINKS_RE = re.compile(r'id="mw-normal-catlinks".*?</div>', re.S)
@@ -62,7 +78,7 @@ def _desc(doc: str, langs) -> str:
 
 def clean_author(s: str) -> str:
     """licensetpl_attr often carries the whole licence blurb; keep only the credit line."""
-    s = re.split(r"\s+You are free|\s+This file is licensed", s or "", maxsplit=1)[0]
+    s = re.split(r"\s+You are free|\s+This file (?:is licensed|was uploaded)", s or "", maxsplit=1)[0]
     s = re.sub(r"\(via Wikimedia Commons\)", "", s)
     s = re.split(r"\s*\.mw-parser-output\b", s, maxsplit=1)[0]  # leaked TemplateStyles CSS
     s = re.sub(r"\s*/\s*(CC[- ]BY[-A-Z ]*[\d.]*|CC0[\d. ]*|Public domain)\s*$", "", s.strip(), flags=re.I)
@@ -91,7 +107,8 @@ def normalize_record(r: dict) -> dict:
 
 def sfw_ok(record: dict) -> bool:
     """Re-check an already-collected record against the (possibly updated) block-list."""
-    return not BLOCK.search(" ".join([record.get("title", ""), record.get("prompt", ""), *record.get("tags", [])]))
+    hay = " ".join([record.get("title", ""), record.get("prompt", ""), *record.get("tags", [])])
+    return not BLOCK.search(hay) and not SENSITIVE.search(hay)
 
 
 def thumb_url(og_image: str, width: int = 500) -> str | None:
@@ -117,7 +134,10 @@ class CommonsAdapter:
     def parse(self, resp: Response):
         path = urlsplit(resp.url).path
         if path.startswith("/wiki/Category:"):
-            for href in dict.fromkeys(CAT_FILE_RE.findall(resp.text)):
+            files = list(dict.fromkeys(CAT_FILE_RE.findall(resp.text)))
+            if not files:  # misspelt/empty category: make it visible in skip reasons instead of silently yielding nothing
+                yield Skip("empty-category"); return
+            for href in files:
                 yield Link(href)
             return
         if path.startswith("/wiki/File:"):
@@ -133,6 +153,8 @@ class CommonsAdapter:
         name = unquote(path[len("/wiki/File:"):]).replace("_", " ")
         if BLOCK.search(" ".join([name, desc_en, desc_zh, *cats])):
             yield Skip("sfw-blocked"); return
+        if SENSITIVE.search(" ".join([name, desc_en, desc_zh, *cats])):
+            yield Skip("sensitive-blocked"); return
         og = re.search(r'<meta property="og:image" content="([^"]+)"', doc)
         cover = thumb_url(og.group(1)) if og else None
         if not cover:
