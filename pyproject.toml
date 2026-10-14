@@ -19,10 +19,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["packages/panel", "packages/demo-data"]
+where = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["packages/panel", "packages/demo-data"]
+pythonpath = ["packages/panel", "packages/demo-data", "packages/db-turso", "packages/edge-worker"]
 [tool.setuptools.package-data]
 galleryedge_ops = ["schemas/*.json"]
