@@ -57,3 +57,4 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
   11. 新增 `--categories` 和 `--list-categories`，可以只抓白名单的一部分。
   12. FTS5 列名 `tags` 和 content 表的 `tags_text` 对不上，导致读 FTS 行时报错（MATCH 不受影响）→ 修正列名，并新增 `schema.rebuild_fts()` 用来迁移已有库。
   13. 屏蔽词 `lama` 误伤 llama → 改成按词边界匹配。
+  14. 作者字段混进上传工具说明（"This file was uploaded with Commonist"）→ 截掉。

@@ -220,3 +220,8 @@ def test_cli_categories(capsys):
     with pytest.raises(SystemExit):
         main(["--adapter", "wikimedia-commons", "--contact", "a@b.c", "--categories", "Flags_of_everything"])
     assert "--list-categories" in capsys.readouterr().err
+
+
+def test_clean_author_upload_tool_note():
+    from galleryedge_adapters.commons import clean_author
+    assert clean_author("FAKE Krapf This file was uploaded with Commonist.") == "FAKE Krapf"

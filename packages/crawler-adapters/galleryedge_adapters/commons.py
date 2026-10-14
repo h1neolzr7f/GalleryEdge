@@ -78,7 +78,7 @@ def _desc(doc: str, langs) -> str:
 
 def clean_author(s: str) -> str:
     """licensetpl_attr often carries the whole licence blurb; keep only the credit line."""
-    s = re.split(r"\s+You are free|\s+This file is licensed", s or "", maxsplit=1)[0]
+    s = re.split(r"\s+You are free|\s+This file (?:is licensed|was uploaded)", s or "", maxsplit=1)[0]
     s = re.sub(r"\(via Wikimedia Commons\)", "", s)
     s = re.split(r"\s*\.mw-parser-output\b", s, maxsplit=1)[0]  # leaked TemplateStyles CSS
     s = re.sub(r"\s*/\s*(CC[- ]BY[-A-Z ]*[\d.]*|CC0[\d. ]*|Public domain)\s*$", "", s.strip(), flags=re.I)
