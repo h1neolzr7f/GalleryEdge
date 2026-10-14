@@ -10,3 +10,4 @@ build/
 *.vault
 *.key
 .env
+node_modules/
