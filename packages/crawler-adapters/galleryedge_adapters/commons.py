@@ -102,6 +102,7 @@ ZH = {"landscape": "风景", "mountain": "山", "lake": "湖", "river": "河流"
 
 # only the MEDIA pager (#mw-category-media); the subcategory pager also carries filefrom= but never advances it
 NEXT_RE = re.compile(r'<a href="(/w/index\.php\?title=Category:[^"]*filefrom=[^"#]*#mw-category-media)"[^>]*>next page</a>')
+SUBCAT_RE = re.compile(r'<a href="/wiki/Category:([^"#?]+)"')
 CAT_FILE_RE = re.compile(r'<a href="(/wiki/File:[^"#?]+)"')
 CATLINKS_RE = re.compile(r'id="mw-normal-catlinks".*?</div>', re.S)
 TITLE_RE = re.compile(r'title="Category:([^"]+)"')
@@ -171,13 +172,15 @@ def thumb_url(og_image: str, width: int = 500) -> str | None:
 class CommonsAdapter:
     name = "wikimedia-commons"
 
-    def __init__(self, categories=SFW_CATEGORIES, max_category_pages: int = 1):
+    def __init__(self, categories=SFW_CATEGORIES, max_category_pages: int = 1, subcat_depth: int = 0, max_subcats: int = 50):
         bad = [c for c in categories if c not in SFW_CATEGORIES]
         if bad:
             raise ValueError(f"category not on the SFW allow-list: {bad}")
         self.categories = list(categories)
         self.max_category_pages = max(1, max_category_pages)
         self._cat_pages: dict[str, int] = {}
+        self.subcat_depth, self.max_subcats = max(0, subcat_depth), max_subcats
+        self._depth: dict[str, int] = {c: 0 for c in self.categories}
 
     def start_urls(self):
         return [f"https://{HOST}/wiki/Category:{c}" for c in self.categories]
@@ -193,6 +196,9 @@ class CommonsAdapter:
             # category pagination: MediaWiki links "next page" via /w/index.php (robots-disallowed), so we
             # rewrite it to the equivalent /wiki/Category:X?filefrom=... URL, bounded per category.
             cat = unquote(path[len("/wiki/Category:"):])
+            d = self._depth.get(cat, 0)
+            if d < self.subcat_depth and "?" not in resp.url:
+                yield from self._subcats(resp.text, d)
             m = NEXT_RE.search(resp.text)
             seen = self._cat_pages.get(cat, 1)
             if m and seen < self.max_category_pages:
@@ -203,6 +209,23 @@ class CommonsAdapter:
             return
         if path.startswith("/wiki/File:"):
             yield from self._file(resp, path)
+
+    def _subcats(self, html: str, depth: int):
+        """Bounded descent into subcategories of an allow-listed category (meta "by ..." and sensitive names skipped)."""
+        i = html.find('id="mw-subcategories"')
+        if i < 0:
+            return
+        j = html.find('id="mw-category-media"', i)
+        n = 0
+        for c in dict.fromkeys(SUBCAT_RE.findall(html[i:j if j > 0 else None])):
+            name = unquote(c)
+            if "_by_" in name or name in self._depth or sensitive_reason(name.replace("_", " ")) or BLOCK.search(name):
+                continue
+            self._depth[name] = depth + 1
+            yield Link(f"https://{HOST}/wiki/Category:{quote(name)}")
+            n += 1
+            if n >= self.max_subcats:
+                break
 
     def _file(self, resp: Response, path: str):
         doc = H.unescape(resp.text)

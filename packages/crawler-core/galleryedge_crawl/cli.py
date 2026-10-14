@@ -26,6 +26,8 @@ def main(argv=None) -> int:
     ap.add_argument("--categories", help="wikimedia-commons: comma-separated subset of the built-in SFW allow-list")
     ap.add_argument("--list-categories", action="store_true", help="wikimedia-commons: print the allow-list and exit")
     ap.add_argument("--category-pages", type=int, default=1, help="wikimedia-commons: follow up to N listing pages (200 files each) per category")
+    ap.add_argument("--subcat-depth", type=int, default=0, help="wikimedia-commons: descend N levels into subcategories of allow-listed categories")
+    ap.add_argument("--max-subcats", type=int, default=50, help="wikimedia-commons: max subcategories followed per category page")
     ap.add_argument("--queries", help="openverse: comma-separated search terms (default: built-in neutral list)")
     ap.add_argument("--concurrency", type=int, default=1, help="parallel requests across DIFFERENT hosts (max 1 in flight per host)")
     ap.add_argument("--recrawl", action="store_true", help="incremental: re-fetch seen pages with ETag/Last-Modified, emit only changes")
@@ -44,7 +46,7 @@ def main(argv=None) -> int:
             print("\n".join(SFW_CATEGORIES)); return 0
         cats = [c.strip() for c in a.categories.split(",") if c.strip()] if a.categories else list(SFW_CATEGORIES)
         try:
-            adapter = ADAPTERS["wikimedia-commons"](cats, max_category_pages=a.category_pages)
+            adapter = ADAPTERS["wikimedia-commons"](cats, max_category_pages=a.category_pages, subcat_depth=a.subcat_depth, max_subcats=a.max_subcats)
         except ValueError as e:
             ap.error(f"{e} (see --list-categories)")
         fetcher, hosts = None, ["commons.wikimedia.org"]
