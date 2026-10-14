@@ -1,3 +1,3 @@
 # crawler-core
 
-Planned (see docs/ROADMAP.md). Not implemented yet.
+See README «合规采集» and docs/PACK_FORMAT.md.
