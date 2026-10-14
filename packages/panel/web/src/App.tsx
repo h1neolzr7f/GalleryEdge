@@ -260,17 +260,23 @@ export function UsersView() {
   if (!data) return <p>加载中…</p>;
   const invite = async () => { try { setCode((await api<any>("/api/invites", { method: "POST", body: { role } })).code); reload(); } catch (e: any) { setMsg(e.message); } };
   const st = async (u: string, s: string) => { try { await api(`/api/users/${u}/${s}`, { method: "POST" }); reload(); } catch (e: any) { setMsg(e.message); } };
+  const changeRole = async (u: string, r: string) => { try { await api(`/api/users/${u}/role`, { method: "POST", body: { role: r } }); setMsg(`${u} 角色已改为 ${r}（需重新登录生效）`); reload(); } catch (e: any) { setMsg(e.message); reload(); } };
+  const revoke = async (id: string) => { if (!confirm("撤销这个邀请码？")) return; try { await api(`/api/invites/${id}/revoke`, { method: "POST" }); reload(); } catch (e: any) { setMsg(e.message); } };
   return (<div>
     <table><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>最近登录</th><th></th></tr></thead><tbody>
-      {data.users.map((u: any) => <tr key={u.username}><td>{u.username}</td><td>{u.role}</td><td><Badge v={u.status === "active" ? "up" : "down"} /></td><td>{u.last_login_at ?? "-"}</td>
+      {data.users.map((u: any) => <tr key={u.username}><td>{u.username}</td><td><select aria-label={`角色 ${u.username}`} value={u.role} onChange={e => changeRole(u.username, e.target.value)}>
+          <option value="viewer">viewer</option><option value="admin">admin</option></select></td><td><Badge v={u.status === "active" ? "up" : "down"} /></td><td>{u.last_login_at ?? "-"}</td>
         <td>{u.status === "active" ? <button onClick={() => st(u.username, "disabled")}>停用</button> : <button onClick={() => st(u.username, "active")}>启用</button>}</td></tr>)}
     </tbody></table>
     <h3>邀请</h3>
     <div className="row"><select value={role} onChange={e => setRole(e.target.value)}><option value="viewer">viewer（只读）</option><option value="admin">admin</option></select>
       <button onClick={invite}>生成邀请码</button></div>
     {code && <p className="warn-box">邀请码（只显示这一次，7 天有效、一次性）：<code>{code}</code></p>}
-    <table><thead><tr><th>角色</th><th>创建者</th><th>到期</th><th>已使用</th></tr></thead><tbody>
-      {data.invites.map((i: any, k: number) => <tr key={k}><td>{i.role}</td><td>{i.created_by}</td><td>{i.expires_at}</td><td>{i.used_by ?? "-"}</td></tr>)}
+    <table><thead><tr><th>ID</th><th>角色</th><th>创建者</th><th>到期</th><th>状态</th><th></th></tr></thead><tbody>
+      {data.invites.map((i: any) => { const revoked = String(i.used_by ?? "").startsWith("revoked:"); const expired = !i.used_by && new Date(i.expires_at) < new Date();
+        return <tr key={i.id}><td><code>{i.id}</code></td><td>{i.role}</td><td>{i.created_by}</td><td>{i.expires_at}</td>
+          <td>{revoked ? "已撤销" : i.used_by ? `已被 ${i.used_by} 使用` : expired ? "已过期" : "待使用"}</td>
+          <td>{!i.used_by && !expired && <button className="danger" onClick={() => revoke(i.id)}>撤销</button>}</td></tr>; })}
     </tbody></table>
     {msg && <p className="err">{msg}</p>}
   </div>);
