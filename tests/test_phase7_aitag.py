@@ -70,7 +70,8 @@ def test_prefix_sql():
 
 def test_cjk_query():
     assert cjk_space("原神胡桃 girl") == "原 神 胡 桃 girl"
-    assert fts5_query("胡桃 girl") == '"胡 桃" "girl"*'
+    assert fts5_query("胡桃 girl") == '("胡桃" OR "胡 桃") "girl"*'
+    assert fts5_query("胡桃 girl", segment=False) == '"胡 桃" "girl"*'
 
 
 def test_prefixed_ingest_leaves_existing_tables_alone(tmp_path):

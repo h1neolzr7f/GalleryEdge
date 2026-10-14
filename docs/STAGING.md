@@ -83,3 +83,9 @@ ge-crawl --adapter wikimedia-commons --contact <你的邮箱或 URL> --out ./pac
 - `type: "webdav"`：通用 RFC 4918（Nextcloud/群晖/坚果云/pCloud/Koofr/rclone serve webdav 等），凭据 `credential_ref` → vault JSON `{"username","password"}`。默认 tier=cold。
 - `tiering.promote_on_read: true`：读取冷层对象时复制回热层并校验，成功后删除冷层副本；失败不影响读取；跳过 > 50MB 与 ledger。
 - 测试用本地 WsgiDAV 真服务器（tests/test_webdav.py）。
+
+## 中文分词（polish-8）
+- 索引：`search_text` = 单字 token（召回兜底）+ jieba 搜索模式词（整词 token）。查询：中文词 → `(词 AND 词) OR "单 字 短语"`；Worker 无词典，用整段 `("词" OR "单 字")`。
+- 度量（`python tools/zh_relevance.py`，含“温和服务/和服”“明天鹅毛/天鹅”等边界陷阱的标注集）：
+  单字：P@1 0.857 · MRR 0.929 · R-precision 0.786 · 召回 1.0；jieba+单字：P@1 0.857 · MRR 0.929 · **R-precision 0.857** · 召回 1.0。
+- 旧数据迁移：`ge-ingest --db ... --token-file ... --refresh-search-text`（只写变化行）。

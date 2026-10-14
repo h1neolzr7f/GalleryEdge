@@ -6,10 +6,15 @@ const HAS_CJK = new RegExp(`[${CJK}]`, "u");
 export const cjkSpace = (s: string | null | undefined) => String(s ?? "").replace(CJK_RE, " $1 ").replace(/\s+/g, " ").trim();
 export const terms = (q: string) => (q.match(/[\p{L}\p{N}_\-]+/gu) ?? []).slice(0, 12);
 
+const CJK_RUN = new RegExp(`^[${CJK}]+$`, "u");
+
+/** Mirrors fts5_query(segment=True) without a dictionary: a pure-CJK term matches as a whole word token
+ *  (indexed by jieba at ingest) OR as the single-character phrase fallback; bm25 ranks word hits higher. */
 export function fts5Query(q: string): string {
   return terms(q).map(t => {
     t = t.replace(/"/g, "");
     const sp = cjkSpace(t);
+    if (CJK_RUN.test(t)) return [...t].length === 1 ? `"${sp}"` : `("${t}" OR "${sp}")`;
     return sp.includes(" ") || HAS_CJK.test(t) ? `"${sp}"` : `"${t}"*`;
   }).join(" ");
 }
