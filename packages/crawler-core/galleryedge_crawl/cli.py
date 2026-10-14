@@ -27,6 +27,9 @@ def main(argv=None) -> int:
     ap.add_argument("--list-categories", action="store_true", help="wikimedia-commons: print the allow-list and exit")
     ap.add_argument("--category-pages", type=int, default=1, help="wikimedia-commons: follow up to N listing pages (200 files each) per category")
     ap.add_argument("--queries", help="openverse: comma-separated search terms (default: built-in neutral list)")
+    ap.add_argument("--concurrency", type=int, default=1, help="parallel requests across DIFFERENT hosts (max 1 in flight per host)")
+    ap.add_argument("--recrawl", action="store_true", help="incremental: re-fetch seen pages with ETag/Last-Modified, emit only changes")
+    ap.add_argument("--since", help="with --recrawl: only pages last seen before this ISO time")
     ap.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
     ap.add_argument("--progress-every", type=int, default=50, help="print a progress line every N pages (stderr)")
     a = ap.parse_args(argv)
@@ -60,15 +63,16 @@ def main(argv=None) -> int:
     except ValueError:
         ap.error("--contact must be a real email address or http(s) URL (it is sent in the User-Agent so site operators can reach you)")
     cfg = CrawlConfig(contact=a.contact, allowed_hosts=hosts, min_interval_s=a.min_interval, max_pages=a.max_pages,
-                      fetch_media=a.fetch_media, pack_size=a.pack_size)
+                      fetch_media=a.fetch_media, pack_size=a.pack_size, concurrency=a.concurrency)
     on_event = None
     if a.panel_db:
         from galleryedge_ops import db as pdb
         from galleryedge_ops.events import emit
         conn = pdb.connect(a.panel_db); pdb.migrate(conn)
         on_event = lambda level, code, msg, payload: emit(conn, "crawler", level, code, msg, payload)  # noqa: E731
-    print(json.dumps(Crawler(adapter, cfg, state_path=a.state, out_dir=a.out, fetcher=fetcher, on_event=on_event,
-                                progress=None if a.quiet else (lambda m: print(m, file=sys.stderr, flush=True)), progress_every=a.progress_every).run(), indent=1))
+    c = Crawler(adapter, cfg, state_path=a.state, out_dir=a.out, fetcher=fetcher, on_event=on_event,
+                progress=None if a.quiet else (lambda m: print(m, file=sys.stderr, flush=True)), progress_every=a.progress_every)
+    print(json.dumps(c.run_incremental(a.since) if a.recrawl else c.run(), indent=1))
     return 0
 
 
