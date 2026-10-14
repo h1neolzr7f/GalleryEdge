@@ -1,0 +1,26 @@
+[project]
+name = "galleryedge"
+version = "0.1.0"
+description = "GalleryEdge ops toolkit (health, alerts, vault, backup, cleanup, config)"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["cryptography>=41", "jsonschema>=4"]
+
+[project.optional-dependencies]
+libsql = ["libsql-experimental"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+ge-ops = "galleryedge_ops.cli:main"
+ge-demo-data = "galleryedge_demo.generate:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["packages/panel", "packages/demo-data"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["packages/panel", "packages/demo-data"]
