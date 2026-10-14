@@ -4,7 +4,15 @@ from galleryedge_ops.alerts import Alerter
 from galleryedge_ops.events import emit
 
 
-def seed(conn) -> None:
+def seed(conn, app=None) -> None:
+    if app is not None and not app.state.release_store.list():
+        import tempfile
+        from pathlib import Path
+        for ver, mig, note in (("0.5.0", 2, "synthetic demo release"), ("0.6.0", 3, "adds accounts (migration 3)")):
+            with tempfile.TemporaryDirectory() as td:
+                (Path(td) / "worker.js").write_text(f"// synthetic bundle {ver}\n")
+                (Path(td) / "panel.html").write_text(f"<!-- synthetic panel {ver} -->\n")
+                app.state.release_store.deploy(td, ver, migration=mig, notes=note, actor="demo")
     if conn.execute("SELECT count(*) FROM packs").fetchone()[0]:
         return
     plan = [("demo-pack-0001", "done", "done", 1.0, None), ("demo-pack-0002", "done", "done", 1.0, None),

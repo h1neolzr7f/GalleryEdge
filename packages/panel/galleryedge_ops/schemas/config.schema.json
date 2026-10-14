@@ -63,6 +63,14 @@
         "d1_optional": {
           "type": "boolean",
           "default": false
+        },
+        "index": {
+          "type": "string",
+          "description": "index DB (works) for self-check: file:, http(s)://, libsql://"
+        },
+        "index_token_ref": {
+          "type": "string",
+          "pattern": "^vault:[A-Za-z0-9_.-]+$"
         }
       }
     },

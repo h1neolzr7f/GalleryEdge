@@ -10,6 +10,7 @@ from galleryedge_panel.server import create_app
 
 EX = json.loads((Path(__file__).parents[1] / "examples/config.example.json").read_text())
 H = {"X-GE-Panel": "1"}
+ADMIN_PW = "FAKE-owner-pass-9876"
 
 
 def make(tmp_path, takeover=True, **panel):
@@ -20,7 +21,11 @@ def make(tmp_path, takeover=True, **panel):
     for b in cfg["backends"]:
         Path(b["path"]).mkdir(parents=True, exist_ok=True)
     conn = db.connect(":memory:"); db.migrate(conn); seed(conn)
-    return TestClient(create_app(cfg, conn)), conn, cfg
+    from galleryedge_ops import auth
+    auth.create_user(conn, "admin", ADMIN_PW, "admin")
+    c = TestClient(create_app(cfg, conn))
+    assert c.post("/api/auth/login", headers=H, json={"username": "admin", "password": ADMIN_PW}).status_code == 200
+    return c, conn, cfg
 
 
 def test_status_and_health(tmp_path):
@@ -93,7 +98,10 @@ def test_localhost_only(tmp_path):
 
 def test_allow_remote_opt_in(tmp_path):
     c, _, _ = make(tmp_path, bind="0.0.0.0", allow_remote=True)
-    assert TestClient(c.app, client=("203.0.113.9", 5555)).get("/api/status").status_code == 200
+    remote = TestClient(c.app, client=("203.0.113.9", 5555))
+    assert remote.get("/api/status").status_code == 401  # remote still needs a session
+    remote.cookies.set("ge_session", c.cookies.get("ge_session"))
+    assert remote.get("/api/status").status_code == 200
 
 
 def test_costs_snapshot_forecast_alerts(tmp_path):

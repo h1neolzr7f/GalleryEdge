@@ -170,7 +170,11 @@ def test_crawler_events_reach_panel_status(source, tmp_path):
     Crawler(DemoSelfhostAdapter(base), cfg(base), state_path=str(tmp_path / "s.db"), out_dir=str(tmp_path / "p"), on_event=ev, heartbeat_every=10).run()
     codes = [c for (c,) in conn.execute("SELECT code FROM events WHERE source='crawler' ORDER BY id")]
     assert codes[0] == "crawler.start" and "crawler.heartbeat" in codes and codes[-2:] == ["crawler.skips", "crawler.done"]
-    c = {"panel": {"bind": "127.0.0.1"}, "alerts": {}, "backends": [], "cleanup": {"roots": []}}
-    st = TestClient(create_app(c, conn)).get("/api/status").json()["crawler"]
+    c = {"panel": {"bind": "127.0.0.1", "state_dir": str(tmp_path / "st")}, "alerts": {}, "backends": [], "cleanup": {"roots": []}}
+    from galleryedge_ops import auth
+    auth.create_user(conn, "admin", "FAKE-owner-pass-9876", "admin")
+    tc = TestClient(create_app(c, conn))
+    tc.post("/api/auth/login", headers={"X-GE-Panel": "1"}, json={"username": "admin", "password": "FAKE-owner-pass-9876"})
+    st = tc.get("/api/status").json()["crawler"]
     assert st["last_code"] == "crawler.done" and st["stats"]["records"] == 45
     assert st["skip_reasons"] == {"login-wall": 2, "no-license": 1, "paywall": 1, "robots-disallow": 1}

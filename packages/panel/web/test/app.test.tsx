@@ -73,3 +73,47 @@ test("storage page shows forecast and migration needs confirm", async () => {
   await waitFor(() => expect(calls.some(c => c.url === "/api/storage/migrate")).toBe(true));
   expect(JSON.parse(String(calls.find(c => c.url === "/api/storage/migrate")!.init!.body))).toEqual({ token: "tk", confirm: true });
 });
+
+import { App, ConfigView, ReleasesView, SelfcheckView, UsersView } from "../src/App";
+
+test("unauthenticated app shows login, never the dashboard", async () => {
+  mockFetch({ "GET /api/auth/state": { user: null, needs_setup: true } });
+  render(<App />);
+  await screen.findByText(/admin create/);
+  expect(screen.queryByText("包任务")).toBeNull();
+});
+
+test("config center shows masks only and posts secrets to the vault", async () => {
+  mockFetch({ "GET /api/config": { path: "/c.json", endpoints: [{ path: "database.primary", value: "file:x.db" }], refs: [{ path: "backends.2.credential_ref", ref: "vault:r2", exists: true, mask: "FA…YZ", expires_at: null }], vault_unlocked: true, credentials: [{ name: "r2", mask: "FA…YZ", version: 1, rotated_at: "t" }] },
+             "POST /api/vault/r2": { version: 2, mask: "FA…01" } });
+  render(<ConfigView />);
+  expect((await screen.findAllByText("FA…YZ")).length).toBe(2);
+  fireEvent.change(screen.getByPlaceholderText("凭据名"), { target: { value: "r2" } });
+  fireEvent.change(screen.getByPlaceholderText(/新值/), { target: { value: "FAKE-NEW" } });
+  fireEvent.click(screen.getByText("保存 / 轮换"));
+  await screen.findByText(/已保存（v2/);
+  expect(document.body.textContent).not.toContain("FAKE-NEW");
+});
+
+test("rollback asks for confirmation and sends confirm:true", async () => {
+  mockFetch({ "GET /api/releases": { current: "0.6.0", releases: [{ version: "0.6.0", migration: 3 }, { version: "0.5.0", migration: 2 }], history: [] },
+             "POST /api/releases/rollback": { from: "0.6.0", to: "0.5.0", db_restore_required: true } });
+  (window as any).confirm = () => false;
+  render(<ReleasesView />);
+  fireEvent.click(await screen.findByText("一键回滚"));
+  expect(calls.some(c => c.url === "/api/releases/rollback")).toBe(false);
+  (window as any).confirm = () => true;
+  fireEvent.click(screen.getByText("一键回滚"));
+  await screen.findByText(/需要从备份恢复数据库/);
+  expect(JSON.parse(String(calls.find(c => c.url === "/api/releases/rollback")!.init!.body)).confirm).toBe(true);
+});
+
+test("users: invite code shown once; selfcheck renders score", async () => {
+  mockFetch({ "GET /api/users": { users: [{ username: "admin", role: "admin", status: "active" }], invites: [] }, "POST /api/invites": { code: "inv_FAKE" } });
+  render(<UsersView />);
+  fireEvent.click(await screen.findByText("生成邀请码"));
+  await screen.findByText("inv_FAKE");
+  mockFetch({ "GET /api/selfcheck": { score: 80, fails: 1, warns: 1, checks: [{ id: "auth.admin", title: "管理员", status: "ok", detail: "1", fix: "" }] } });
+  render(<SelfcheckView />);
+  await screen.findByText("80");
+});

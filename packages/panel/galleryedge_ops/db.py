@@ -26,6 +26,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         started_at TEXT, updated_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_packs_status ON packs(status);
     """),
+    (3, """
+    CREATE TABLE IF NOT EXISTS users(username TEXT PRIMARY KEY, pw_hash TEXT NOT NULL, role TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, invited_by TEXT);
+    CREATE TABLE IF NOT EXISTS invites(code_hash TEXT PRIMARY KEY, role TEXT NOT NULL, created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_by TEXT, note TEXT);
+    CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL, last_seen TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS login_failures(username TEXT NOT NULL, ts TEXT NOT NULL);
+    """),
 ]
 
 

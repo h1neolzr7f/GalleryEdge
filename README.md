@@ -90,3 +90,15 @@ GE_VAULT_PASSPHRASE='...' ge-ops --config config.json health
 ```
 
 Safety guarantees: the panel binds to `127.0.0.1` by default, secrets are encrypted at rest and masked in all logs, cleanup never touches ledgers (`done.txt`, `seen.txt`, `packed_works.txt`, `prompts.jsonl`), un-uploaded tars or in-progress staging, and CI runs gitleaks on every PR.
+
+## Phase 6 — 登录、账号、配置中心、发布回滚、安全自检 / auth, accounts, config center, releases, self-check
+
+```bash
+echo 'your-long-password' | ge-panel --config config.json admin create owner   # 首个管理员 / first admin
+GE_VAULT_PASSPHRASE=... ge-panel --config config.json                           # http://127.0.0.1:8790 登录 / log in
+ge-panel --config config.json release deploy ./build --version 1.2.0 --migration 3   # 本地模拟发布 / local simulated deploy
+ge-panel --config config.json release rollback                                  # 或在面板"发布"页一键回滚
+```
+新页面：配置中心（端点 + 凭据掩码 + 保险库设置/轮换）、用户（邀请码）、发布、安全自检（含备份恢复演练）。详见 [docs/WHITEPAPER.md](docs/WHITEPAPER.md)。
+
+![login](docs/screenshots/phase6-02-login.png) ![selfcheck](docs/screenshots/phase6-06-selfcheck.png)
