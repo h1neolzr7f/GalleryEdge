@@ -132,6 +132,15 @@
           "free_gb": {
             "type": "number",
             "minimum": 0
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
           }
         }
       }
@@ -209,6 +218,11 @@
           "type": "integer",
           "minimum": 1,
           "default": 14
+        },
+        "sample_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 60
         }
       }
     },
