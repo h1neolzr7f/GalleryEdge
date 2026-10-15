@@ -246,3 +246,13 @@ def test_missing_user_password_check_uses_normal_cost_hash(monkeypatch, tmp_path
         auth.login(conn, "absentuser", "FAKE-Password-Strong-88")
     assert observed == [auth._DUMMY_PASSWORD_HASH]
     assert auth._DUMMY_PASSWORD_HASH.split("$")[1] == str(2**14)
+
+
+
+def test_rollback_rejects_path_traversal_version(tmp_path):
+    from galleryedge_ops.releases import ReleaseStore, ReleaseError
+    import pytest
+    store = ReleaseStore(tmp_path / "releases")
+    for bad in ("../outside", "../../", "/tmp/other", "v1/../2", ""):
+        with pytest.raises(ReleaseError, match="invalid release version"):
+            store.switch(bad, actor="admin", action="rollback")

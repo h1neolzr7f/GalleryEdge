@@ -61,7 +61,13 @@ class LocalBackend:
             raise StorageError(f"{self.id}: read-only backend")
 
     def _p(self, key):
-        return self.root / check_key(key)
+        # Validating '..' alone is not enough: an existing symlink in a
+        # parent directory or object file can point outside the storage root.
+        root = self.root.resolve()
+        path = (root / check_key(key)).resolve()
+        if not path.is_relative_to(root) or path == root:
+            raise StorageError(f"{self.id}: object path escapes storage root")
+        return path
 
     def put(self, key, data):
         self._rw()
@@ -86,11 +92,21 @@ class LocalBackend:
         self._p(key).unlink(missing_ok=True)
 
     def list(self, prefix=""):
-        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*") if p.is_file() and not p.name.startswith(".put-")
-                      and str(p.relative_to(self.root)).startswith(prefix))
+        keys = []
+        for p in self.root.rglob("*"):
+            if not p.is_file() or p.is_symlink() or p.name.startswith(".put-"):
+                continue
+            rel = p.relative_to(self.root).as_posix()
+            if rel.startswith(prefix):
+                try:
+                    self._p(rel)
+                    keys.append(rel)
+                except StorageError:
+                    continue
+        return sorted(keys)
 
     def usage(self):
-        files = [p for p in self.root.rglob("*") if p.is_file()]
+        files = [self._p(key) for key in self.list()]
         return sum(p.stat().st_size for p in files), len(files)
 
 
@@ -178,6 +194,22 @@ CREATE TABLE IF NOT EXISTS usage_snapshots(ts TEXT NOT NULL, meter TEXT NOT NULL
 """
 
 
+class _RejectCredentialRedirect:
+    """Returns an HTTP redirect handler that never forwards Basic credentials."""
+    @staticmethod
+    def handler():
+        import urllib.error
+        import urllib.request
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                # Even a redirect to HTTPS can point at an attacker-controlled
+                # host. urllib's default handler copies Authorization.
+                raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+        return NoRedirect()
+
+
 class WebDAVBackend:
     """Generic WebDAV (RFC 4918) backend: Nextcloud/ownCloud, Synology, Box/pCloud/Koofr WebDAV, rclone serve webdav...
     Uses PUT/GET/HEAD/DELETE/MKCOL/PROPFIND only; credentials (basic auth) come from the vault, never from config."""
@@ -191,7 +223,7 @@ class WebDAVBackend:
         if username is not None:
             import base64
             self._auth = "Basic " + base64.b64encode(f"{username}:{password or ''}".encode()).decode()
-        self.opener = opener or urllib.request.build_opener()
+        self.opener = opener or urllib.request.build_opener(_RejectCredentialRedirect.handler())
         self._dirs: set[str] = set()
 
     def _req(self, method, key="", data=None, headers=None, ok=(200, 201, 204, 207)):
@@ -224,7 +256,7 @@ class WebDAVBackend:
             if d in self._dirs:
                 continue
             st, _, _ = self._req("MKCOL", d)
-            if st not in (201, 405, 301):  # 405 = already exists
+            if st not in (201, 405):  # 405 = already exists; never follow redirects
                 raise StorageError(f"{self.id}: MKCOL {d} -> {st}")
             self._dirs.add(d)
 

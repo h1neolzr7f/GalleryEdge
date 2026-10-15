@@ -81,6 +81,8 @@ class ReleaseStore:
         return self.switch(version, actor=actor, action="deploy", backup_fn=backup_fn)
 
     def switch(self, version: str, *, actor: str, action: str, backup_fn=None) -> dict:
+        if not isinstance(version, str) or not VER_RE.fullmatch(version):
+            raise ReleaseError("invalid release version")
         if not (self.root / "releases" / version / "release.json").exists():
             raise ReleaseError(f"unknown release {version}")
         if not self.verify(version):
