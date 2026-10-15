@@ -11,7 +11,7 @@ from galleryedge_pack import PackError, read_pack
 
 
 def ingest_pack(db, path, stats: dict | None = None) -> dict:
-    man, records, _media = read_pack(path)  # verifies checksums + every record first
+    man, records, _media = read_pack(path, include_media=False)  # stream + verify media without loading it
     rows = []
     for r in records:
         prov = r["provenance"]

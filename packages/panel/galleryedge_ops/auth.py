@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 
 from .events import audit
@@ -37,6 +38,12 @@ def hash_password(pw: str, *, n: int = 2**14) -> str:
     salt = secrets.token_bytes(16)
     dk = hashlib.scrypt(pw.encode(), salt=salt, n=n, r=8, p=1, dklen=32)
     return f"scrypt${n}$8$1${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
+
+
+# A fixed-cost dummy verifier avoids a noticeable login timing difference
+# between existing and nonexistent usernames.
+_DUMMY_PASSWORD_HASH = hash_password("invalid-user-dummy-value")
+_REGISTER_LOCK = threading.RLock()
 
 
 def verify_password(pw: str, stored: str) -> bool:
@@ -145,12 +152,33 @@ def list_invites(conn) -> list[dict]:
 
 
 def register(conn, code: str, username: str, password: str) -> None:
-    r = conn.execute("SELECT role, created_by, expires_at, used_by FROM invites WHERE code_hash=?", (_h(code or ""),)).fetchone()
-    if not r or r[3] or datetime.fromisoformat(r[2]) < _now():
-        raise AuthError("invalid or expired invite")
-    create_user(conn, username, password, r[0], invited_by=r[1])
-    conn.execute("UPDATE invites SET used_by=? WHERE code_hash=?", (username, _h(code)))
-    conn.commit()
+    """Atomically claim a single-use invitation and create the account."""
+    if not USER_RE.match(username or ""):
+        raise AuthError("username: 3-32 chars, lowercase letters, digits, _ . -")
+    check_password_policy(password, username)
+    pw_hash = hash_password(password)
+    with _REGISTER_LOCK:
+        if conn.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+            raise AuthError("username taken")
+        try:
+            # UPDATE ... RETURNING is atomic across connections and processes:
+            # only one caller can claim an unused invite before expiration.
+            r = conn.execute(
+                "UPDATE invites SET used_by=? WHERE code_hash=? AND used_by IS NULL AND expires_at>? RETURNING role,created_by",
+                (username, _h(code or ""), _iso(_now())),
+            ).fetchone()
+            if not r:
+                conn.rollback()
+                raise AuthError("invalid or expired invite")
+            conn.execute("INSERT INTO users VALUES (?,?,?,'active',?,?)",
+                         (username, pw_hash, r[0], _iso(_now()), r[1]))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            if "UNIQUE constraint failed" in str(e):
+                raise AuthError("username taken") from None
+            raise
+    audit(conn, r[1], "user.create", {"username": username, "role": r[0]})
 
 
 def totp_status(conn, username: str) -> bool:
@@ -202,7 +230,7 @@ def login(conn, username: str, password: str, otp: str | None = None, *, require
     if fails >= LOCK_FAILS:
         raise AuthError("too many failed attempts, try again later")
     r = conn.execute("SELECT pw_hash, status FROM users WHERE username=?", (username,)).fetchone()
-    ok = verify_password(password, r[0] if r else hash_password("x" * 12, n=2**10))  # constant-ish work
+    ok = verify_password(password, r[0] if r else _DUMMY_PASSWORD_HASH)
     if not r or not ok or r[1] != "active":
         conn.execute("INSERT INTO login_failures VALUES (?,?)", (username, _iso(now))); conn.commit()
         audit(conn, username or "?", "auth.login_failed")

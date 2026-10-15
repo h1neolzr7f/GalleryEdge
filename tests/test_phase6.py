@@ -202,3 +202,57 @@ def test_selfcheck_and_drill(tmp_path):
     assert d["ok"] and d["files"]
     ids = {x["id"]: x["status"] for x in c.get("/api/selfcheck").json()["checks"]}
     assert ids["backup.drill"] == "ok"
+
+
+
+def test_invite_can_only_be_claimed_once(tmp_path):
+    """An invite's claim and account creation must be atomic."""
+    import pytest
+    from galleryedge_ops import auth, db
+    conn = db.connect(str(tmp_path / "auth-invites.db"))
+    db.migrate(conn)
+    auth.create_user(conn, "owner", "FAKE-Admin-Password-Strong-99", "admin")
+    code = auth.create_invite(conn, "owner", "viewer")
+    auth.register(conn, code, "personone", "FAKE-Password-Strong-88")
+    with pytest.raises(auth.AuthError, match="invalid or expired"):
+        auth.register(conn, code, "persontwo", "FAKE-Password-Strong-88")
+    assert conn.execute("SELECT count(*) FROM users WHERE username IN ('personone','persontwo')").fetchone()[0] == 1
+
+
+def test_failed_registration_keeps_invitation(tmp_path):
+    import pytest
+    from galleryedge_ops import auth, db
+    conn = db.connect(str(tmp_path / "auth-rollback.db"))
+    db.migrate(conn)
+    auth.create_user(conn, "owner", "FAKE-Admin-Password-Strong-99", "admin")
+    code = auth.create_invite(conn, "owner")
+    with pytest.raises(auth.AuthError, match="username taken"):
+        auth.register(conn, code, "owner", "FAKE-Password-Strong-88")
+    auth.register(conn, code, "visitor", "FAKE-Password-Strong-88")
+    assert auth.user_count(conn) == 2
+
+
+def test_missing_user_password_check_uses_normal_cost_hash(monkeypatch, tmp_path):
+    from galleryedge_ops import auth, db
+    conn = db.connect(str(tmp_path / "auth-timing.db"))
+    db.migrate(conn)
+    observed = []
+    original = auth.verify_password
+    def spy(password, stored):
+        observed.append(stored)
+        return original(password, stored)
+    monkeypatch.setattr(auth, "verify_password", spy)
+    with pytest.raises(auth.AuthError):
+        auth.login(conn, "absentuser", "FAKE-Password-Strong-88")
+    assert observed == [auth._DUMMY_PASSWORD_HASH]
+    assert auth._DUMMY_PASSWORD_HASH.split("$")[1] == str(2**14)
+
+
+
+def test_rollback_rejects_path_traversal_version(tmp_path):
+    from galleryedge_ops.releases import ReleaseStore, ReleaseError
+    import pytest
+    store = ReleaseStore(tmp_path / "releases")
+    for bad in ("../outside", "../../", "/tmp/other", "v1/../2", ""):
+        with pytest.raises(ReleaseError, match="invalid release version"):
+            store.switch(bad, actor="admin", action="rollback")

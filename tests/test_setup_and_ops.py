@@ -123,3 +123,79 @@ def test_keys_create_writes_0600_file(tmp_path):
     assert Path(out).stat().st_mode & 0o777 == 0o600
     key = Path(out).read_text().strip()
     assert key.startswith("ge_") and key not in j["message"] and key not in j["result"]
+
+
+
+def test_real_setup_wizard_rejects_rebinding_and_cross_origin(tmp_path, monkeypatch):
+    """Test the actual wizard middleware, not a hand-written duplicate."""
+    import uvicorn
+    from galleryedge_ops import setup as setup_module
+
+    seen = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: seen.append(app))
+    root = tmp_path / "safe-install"
+    applied = []
+    def fake_apply(target, **kwargs):
+        applied.append(str(target))
+        return {"ok": True}
+    monkeypatch.setattr(setup_module, "apply", fake_apply)
+    assert run_setup_wizard(str(root), 8799) == 0
+    app = seen[0]
+    client = TestClient(app)
+    payload = {"root": str(tmp_path / "untrusted-location"), "username": "admin",
+               "password": ADMIN_PW, "vault_passphrase": "FAKE-test-vault"}
+
+    assert client.post("/api/setup/apply", json=payload).status_code == 403
+    assert client.get("/api/setup/defaults", headers={"Host": "rebind.example"}).status_code == 403
+    assert client.post("/api/setup/apply", json=payload,
+                       headers={"X-GE-Panel": "1", "Origin": "http://evil.example"}).status_code == 403
+    assert client.post("/api/setup/apply", json=payload,
+                       headers={"X-GE-Panel": "1"}).status_code == 200
+    assert applied == [str(root.resolve())]
+
+
+def test_abandoned_running_job_is_marked_interrupted(tmp_path):
+    conn = db.connect(str(tmp_path / "jobs.db"))
+    db.migrate(conn)
+    jobs.migrate(conn)
+    jid = jobs.enqueue(conn, "crawl", "admin", {"adapter": "synthetic"})
+    conn.execute("UPDATE jobs SET status='running' WHERE id=?", (jid,))
+    conn.commit()
+    runner = jobs.JobRunner(conn, {"panel": {"state_dir": str(tmp_path)}})
+    runner.start()
+    try:
+        job = jobs.get_job(conn, jid)
+        assert job["status"] == "error"
+        assert "中断" in job["message"]
+    finally:
+        runner.stop()
+
+
+
+def test_setup_does_not_leak_vault_passphrase_into_npm(tmp_path, monkeypatch):
+    import subprocess
+    import shutil
+    from galleryedge_ops import setup
+    secret = "FAKE-only-for-setup-very-long"
+    monkeypatch.setenv("GE_VAULT_PASSPHRASE", "FAKE-preexisting-value")
+    monkeypatch.setattr(shutil, "which", lambda program: "/usr/bin/npm")
+    # Other setup tests may already have built the shared frontend dist tree.
+    # Force this test through the npm branch independently of test order.
+    original_exists = Path.exists
+    def exists(path):
+        if path.name == "index.html" and path.parent.name == "dist" and path.parent.parent.name == "web":
+            return False
+        return original_exists(path)
+    monkeypatch.setattr(Path, "exists", exists)
+    seen = []
+    def fake_run(cmd, **kw):
+        assert "GE_VAULT_PASSPHRASE" not in kw["env"]
+        assert secret not in repr(kw)
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    data = tmp_path / "isolated"
+    setup.apply(data, username="admin", password=ADMIN_PW, vault_passphrase=secret)
+    assert seen == [["npm", "ci"], ["npm", "run", "build"]]
+    assert os.environ["GE_VAULT_PASSPHRASE"] == "FAKE-preexisting-value"
+    assert (data / "var/vault-passphrase.txt").read_text().strip() == secret

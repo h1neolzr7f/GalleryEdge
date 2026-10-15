@@ -36,6 +36,13 @@ export const coverSrc = (w: any) => /^https:\/\/upload\.wikimedia\.org\/wikipedi
 export const splitTags = (t: unknown) => { const s = String(t ?? ""); return (s.includes("|") ? s.split("|") : s.split(" ")).map(x => x.trim()).filter(Boolean); };
 
 export const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#x27;" }[c]!));
+/** HTML-escaped attributes alone do not prevent javascript: URLs in untrusted records. */
+export const safeHttpUrl = (s: unknown): string | null => {
+  try {
+    const url = new URL(String(s ?? ""));
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch { return null; }
+};
 const qs = (o: Record<string, string | number | undefined>) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString();
 
 const SEC_HEADERS = {
@@ -146,7 +153,7 @@ export class Site {
 
   async index(q: string, tag: string, artist: string, page: number): Promise<string> {
     const res = await this.search(q, tag, artist, page);
-    const cards = res.items.map((w: any) => `<a class="card" href="/work/${esc(w.id)}"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" loading="lazy" referrerpolicy="no-referrer"><div class="b"><h3>${esc(w.title)}</h3><div class="meta">${esc(w.artist)} · ${esc(w.license)} · ${w.image_count} 张</div>${w.tags.map((t: string) => `<span class="tag">${esc(t)}</span>`).join("")}</div></a>`).join("");
+    const cards = res.items.map((w: any) => `<a class="card" href="/work/${esc(w.id)}"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" loading="lazy" referrerpolicy="no-referrer"><div class="b"><h3>${esc(w.title)}</h3><div class="meta">${esc(w.artist)} · ${esc(w.license)} · ${esc(w.image_count)} 张</div>${w.tags.map((t: string) => `<span class="tag">${esc(t)}</span>`).join("")}</div></a>`).join("");
     const filt = [tag ? `标签 tag: <b>${esc(tag)}</b>` : "", artist ? `画师 artist: <b>${esc(artist)}</b>` : ""].filter(Boolean).join(" · ");
     const tagbar = (await this.tags()).slice(0, 20).map((t: any) => `<a class="tag" href="/?${qs({ tag: t.tag })}">${esc(t.tag)} ${t.n}</a>`).join(" ");
     const pages = Math.max(1, Math.ceil(res.total / PAGE));
@@ -157,7 +164,11 @@ export class Site {
 
   workPage(w: any): string {
     const tags = w.tags.map((t: string) => `<a class="tag" href="/?${qs({ tag: t })}">${esc(t)}</a>`).join("");
-    return this.layout(String(w.title), `<main style="max-width:900px"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" referrerpolicy="no-referrer" style="width:100%;max-width:480px;border-radius:12px"><h2>${esc(w.title)}</h2><p class="meta">作者 <a href="/?${qs({ artist: w.artist ?? "" })}">${esc(w.artist)}</a> · 许可 ${w.license_url ? `<a href="${esc(w.license_url)}" rel="license noopener">${esc(w.license)}</a>` : esc(w.license)} · 来源 <a href="${esc(w.source_url)}" rel="nofollow noopener">${esc(w.source_url)}</a></p>${w.attribution ? `<p class="attribution" id="attribution">署名 Attribution：${esc(w.attribution)}</p>` : ""}<p>${tags}</p><h3>${w.attribution ? "描述 Description" : "提示词 Prompt"}</h3><pre id="prompt">${esc(w.prompt)}</pre><button id="copy" onclick="navigator.clipboard.writeText(document.getElementById('prompt').innerText).then(()=>this.textContent='已复制 ✓')">${w.attribution ? "复制描述 Copy" : "复制提示词 Copy"}</button></main>`);
+    const license = safeHttpUrl(w.license_url);
+    const source = safeHttpUrl(w.source_url);
+    const licenseText = license ? `<a href="${esc(license)}" rel="license noopener">${esc(w.license)}</a>` : esc(w.license);
+    const sourceText = source ? `<a href="${esc(source)}" rel="nofollow noopener">${esc(w.source_url)}</a>` : esc(w.source_url);
+    return this.layout(String(w.title), `<main style="max-width:900px"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" referrerpolicy="no-referrer" style="width:100%;max-width:480px;border-radius:12px"><h2>${esc(w.title)}</h2><p class="meta">作者 <a href="/?${qs({ artist: w.artist ?? "" })}">${esc(w.artist)}</a> · 许可 ${licenseText} · 来源 ${sourceText}</p>${w.attribution ? `<p class="attribution" id="attribution">署名 Attribution：${esc(w.attribution)}</p>` : ""}<p>${tags}</p><h3>${w.attribution ? "描述 Description" : "提示词 Prompt"}</h3><pre id="prompt">${esc(w.prompt)}</pre><button id="copy" onclick="navigator.clipboard.writeText(document.getElementById('prompt').innerText).then(()=>this.textContent='已复制 ✓')">${w.attribution ? "复制描述 Copy" : "复制提示词 Copy"}</button></main>`);
   }
 }
 

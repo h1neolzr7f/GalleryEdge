@@ -117,3 +117,28 @@ def test_forecast_and_cost(conn):
     assert f["value"] == 1900 and round(f["per_day"]) == 100 and round(f["days_to_quota"]) == 11 and f["ratio"] == pytest.approx(1900 / 3000)
     assert forecast(conn, "none", 10, now=NOW)["value"] is None
     assert monthly_cost(25e9, 2e6, 0.015, 0.36, free_gb=10) == pytest.approx(15 * 0.015 + 2 * 0.36)
+
+
+
+def test_local_backend_rejects_symlink_escape(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "secret.txt"
+    target.write_bytes(b"private")
+    root = tmp_path / "local"
+    b = LocalBackend("local", str(root))
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    (root / "object").symlink_to(target)
+    for key in ("link/secret.txt", "object"):
+        with pytest.raises(StorageError, match="escapes storage root"):
+            b.get(key)
+        with pytest.raises(StorageError, match="escapes storage root"):
+            b.put(key, b"overwrite")
+        with pytest.raises(StorageError, match="escapes storage root"):
+            b.delete(key)
+        with pytest.raises(StorageError, match="escapes storage root"):
+            b.head(key)
+    assert target.read_bytes() == b"private"
+    assert b.list() == [] and b.usage() == (0, 0)
+    b.put("safe/sub.txt", b"safe")
+    assert b.get("safe/sub.txt") == b"safe"

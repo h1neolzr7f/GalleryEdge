@@ -193,3 +193,17 @@ test("ops hub lists actions and requires confirm before crawl", async () => {
   await waitFor(() => expect(calls.some(c => c.url === "/api/ops/crawl")).toBe(true));
   expect(JSON.parse(String(calls.find(c => c.url === "/api/ops/crawl")!.init!.body)).confirm).toBe(true);
 });
+
+
+
+test("content view refuses javascript links and data image sources", async () => {
+  mockFetch({ "GET /api/content": { configured: true, read_only: true, works: 2, licenses: [],
+    recent: [["w-bad", "unsafe work", "a", "CC0", "javascript:alert(1)", "data:image/svg+xml,<svg/>"],
+             ["w-ok", "safe work", "b", "CC0", "https://example.org/x", "https://example.org/x.jpg"]] } });
+  render(<ContentView />);
+  const unsafe = await screen.findByText("unsafe work");
+  expect(unsafe.closest("a")).toBeNull();
+  expect(unsafe.closest("tr")?.querySelector("img")).toBeNull();
+  const safe = await screen.findByText("safe work");
+  expect(safe.closest("a")?.getAttribute("href")).toBe("https://example.org/x");
+});

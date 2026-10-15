@@ -187,7 +187,8 @@ def connect(url: str, auth_token: str | None = None, *, prefix: str = ""):
 
 
 GE_TABLES = ("works_fts_idx", "works_fts", "works_ai", "works_ad", "works_au", "works", "work_tags", "idx_work_tags_tag", "idx_works_artist",
-             "api_plans", "api_keys", "usage_daily", "usage_minute", "meta")
+             "api_plans", "api_keys", "usage_daily", "usage_minute", "meta",
+             "quota_daily_insert", "quota_daily_update", "quota_minute_insert", "quota_minute_update")
 _PREFIX_RE = re.compile(r"\b(" + "|".join(GE_TABLES) + r")\b")
 
 

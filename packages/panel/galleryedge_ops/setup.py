@@ -83,7 +83,8 @@ def apply(root: str | Path, *, username: str, password: str, vault_passphrase: s
         fd = os.open(vp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(vault_passphrase + "\n")
-    os.environ["GE_VAULT_PASSPHRASE"] = vault_passphrase
+    # Never publish the new passphrase into process-wide environment variables.
+    # In particular, npm lifecycle scripts must not inherit it.
     vault = Vault(cfg["vault"]["path"], vault_passphrase)
     vault.set("setup-marker", "ok")
 
@@ -101,9 +102,10 @@ def apply(root: str | Path, *, username: str, password: str, vault_passphrase: s
     if not built:
         import shutil, subprocess
         if shutil.which("npm") and (web / "package.json").exists():
-            r = subprocess.run(["npm", "ci"], cwd=web, capture_output=True, text=True, timeout=180)
+            safe_env = {k: v for k, v in os.environ.items() if k != "GE_VAULT_PASSPHRASE"}
+            r = subprocess.run(["npm", "ci"], cwd=web, env=safe_env, capture_output=True, text=True, timeout=180)
             if r.returncode == 0:
-                r = subprocess.run(["npm", "run", "build"], cwd=web, capture_output=True, text=True, timeout=180)
+                r = subprocess.run(["npm", "run", "build"], cwd=web, env=safe_env, capture_output=True, text=True, timeout=180)
                 build_note = "frontend built" if r.returncode == 0 else "frontend build failed (panel API still works)"
             else:
                 build_note = "npm ci failed (panel API still works)"

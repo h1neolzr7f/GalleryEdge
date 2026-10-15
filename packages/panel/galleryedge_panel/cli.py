@@ -113,9 +113,26 @@ def run_setup_wizard(root: str, port: int) -> int:
 
     @app.middleware("http")
     async def local_only(request, call_next):
+        # Loopback binding alone does not prevent DNS rebinding against localhost.
+        # Also require a same-origin request with a non-simple header for writes.
+        from urllib.parse import urlsplit
+
         host = request.client.host if request.client else ""
-        if host not in ("127.0.0.1", "::1", "testclient", "testserver"):
+        host_hdr = (request.url.hostname or "").lower()
+        if host not in ("127.0.0.1", "::1", "testclient", "testserver") or host_hdr not in ("127.0.0.1", "::1", "localhost", "testserver"):
             return JSONResponse({"error": "setup wizard is localhost-only"}, status_code=403)
+        origin = request.headers.get("origin")
+        if origin:
+            try:
+                u = urlsplit(origin)
+                same_origin = (u.scheme == request.url.scheme and u.hostname == request.url.hostname
+                               and u.port == request.url.port)
+            except ValueError:
+                same_origin = False
+            if not same_origin:
+                return JSONResponse({"error": "foreign origin"}, status_code=403)
+        if request.method not in ("GET", "HEAD") and request.headers.get("x-ge-panel") != "1":
+            return JSONResponse({"error": "missing X-GE-Panel header"}, status_code=403)
         return await call_next(request)
 
     @app.get("/api/setup/defaults")
@@ -125,7 +142,7 @@ def run_setup_wizard(root: str, port: int) -> int:
     @app.post("/api/setup/apply")
     def do_apply(body: dict = Body(...)):
         try:
-            return apply(body.get("root") or root,
+            return apply(root,
                          username=str(body.get("username") or "").strip(),
                          password=str(body.get("password") or ""),
                          vault_passphrase=str(body.get("vault_passphrase") or ""),

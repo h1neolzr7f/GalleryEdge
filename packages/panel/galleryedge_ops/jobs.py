@@ -97,6 +97,15 @@ class JobRunner:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        # Process death interrupts running work. Do not leave a permanent
+        # "running" status or auto-replay potentially non-idempotent operations.
+        migrate(self.conn)
+        self.conn.execute(
+            "UPDATE jobs SET status='error', message=?, updated_at=? WHERE status='running'",
+            ("任务被上次进程退出中断；请检查结果后手动重试", _now()),
+        )
+        self.conn.commit()
+        self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="ge-jobs", daemon=True)
         self._thread.start()
 

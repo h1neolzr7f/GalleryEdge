@@ -26,8 +26,29 @@ INSERT OR IGNORE INTO api_plans VALUES ('demo', 30, 1000);
 """
 
 
+# Enforced inside the database transaction, not after a racy SELECT.
+# Each INSERT/UPSERT is subject to these guards, including concurrent requests.
+USAGE_GUARDS = """
+CREATE TRIGGER IF NOT EXISTS quota_daily_insert BEFORE INSERT ON usage_daily
+WHEN EXISTS (SELECT 1 FROM api_keys WHERE prefix=NEW.prefix) AND
+ NEW.count > (SELECT p.rpd FROM api_keys k JOIN api_plans p ON k.plan=p.name WHERE k.prefix=NEW.prefix)
+BEGIN SELECT RAISE(ABORT, 'ge_daily_quota'); END;
+CREATE TRIGGER IF NOT EXISTS quota_daily_update BEFORE UPDATE ON usage_daily
+WHEN EXISTS (SELECT 1 FROM api_keys WHERE prefix=NEW.prefix) AND
+ NEW.count > (SELECT p.rpd FROM api_keys k JOIN api_plans p ON k.plan=p.name WHERE k.prefix=NEW.prefix)
+BEGIN SELECT RAISE(ABORT, 'ge_daily_quota'); END;
+CREATE TRIGGER IF NOT EXISTS quota_minute_insert BEFORE INSERT ON usage_minute
+WHEN EXISTS (SELECT 1 FROM api_keys WHERE prefix=NEW.prefix) AND
+ NEW.count > (SELECT p.rpm FROM api_keys k JOIN api_plans p ON k.plan=p.name WHERE k.prefix=NEW.prefix)
+BEGIN SELECT RAISE(ABORT, 'ge_minute_quota'); END;
+CREATE TRIGGER IF NOT EXISTS quota_minute_update BEFORE UPDATE ON usage_minute
+WHEN EXISTS (SELECT 1 FROM api_keys WHERE prefix=NEW.prefix) AND
+ NEW.count > (SELECT p.rpm FROM api_keys k JOIN api_plans p ON k.plan=p.name WHERE k.prefix=NEW.prefix)
+BEGIN SELECT RAISE(ABORT, 'ge_minute_quota'); END;
+"""
+
 def init(client, dialect) -> None:
-    for s in split_sql(BASE + dialect.ddl()):
+    for s in split_sql(BASE + USAGE_GUARDS + dialect.ddl()):
         if s.strip():
             client.execute(s.strip())
     client.execute("INSERT OR REPLACE INTO meta VALUES ('fts_dialect', ?)", [dialect.name])
@@ -59,6 +80,9 @@ def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None 
             for k in ("id", "title", "source_url", "license", "rating"):
                 if not w.get(k):
                     raise ValueError(f"work {w.get('id')!r} missing required field {k}")
+            count = w.get("image_count", 1)
+            if type(count) is not int or not 0 <= count <= 1_000_000:
+                raise ValueError(f"work {w.get('id')!r} invalid image_count")
             items.append(("DELETE FROM works WHERE id=?", (w["id"],)))
             items.append(("DELETE FROM work_tags WHERE work_id=?", (w["id"],)))
             items.append(("INSERT INTO works(id,title,prompt,source_url,license,rights_note,rating,artist,tags_text,image_count,cover_key,created_at,retrieved_at,pack_id,synthetic,search_text,author,license_url,attribution,cover_url)"

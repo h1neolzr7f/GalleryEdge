@@ -23,7 +23,9 @@ INSERT OR IGNORE INTO api_plans VALUES ('demo', 30, 1000);
 
 def init_usage(db) -> None:
     """Create only the key/usage tables (for a dedicated writable usage DB)."""
-    for s in USAGE_SCHEMA.split(";"):
+    from galleryedge_db.client import split_sql
+    from galleryedge_db.schema import USAGE_GUARDS
+    for s in split_sql(USAGE_SCHEMA + USAGE_GUARDS):
         if s.strip():
             db.execute(s.strip())
 
@@ -101,6 +103,16 @@ def check(db, key: str | None, now: datetime | None = None) -> tuple[int, str, d
         return 429, "daily quota exceeded", {"Retry-After": "3600", "X-RateLimit-Remaining-Day": "0"}
     if used_m >= rpm:
         return 429, "rate limit exceeded", {"Retry-After": str(60 - now.second), "X-RateLimit-Remaining-Day": str(rpd - used_d)}
-    db.batch([("INSERT INTO usage_daily VALUES (?,?,1) ON CONFLICT(prefix,day) DO UPDATE SET count=count+1", (prefix, day)),
-              ("INSERT INTO usage_minute VALUES (?,?,1) ON CONFLICT(prefix,minute) DO UPDATE SET count=count+1", (prefix, minute))])
+    from galleryedge_db.client import DBError
+    try:
+        db.batch([("INSERT INTO usage_daily VALUES (?,?,1) ON CONFLICT(prefix,day) DO UPDATE SET count=count+1", (prefix, day)),
+                  ("INSERT INTO usage_minute VALUES (?,?,1) ON CONFLICT(prefix,minute) DO UPDATE SET count=count+1", (prefix, minute))])
+    except DBError as exc:
+        # Trigger failure rolls the *entire* transactional batch back. A second
+        # request with a stale pre-check sees HTTP 429 instead of exceeding quota.
+        if "ge_daily_quota" in str(exc):
+            return 429, "daily quota exceeded", {"Retry-After": "3600", "X-RateLimit-Remaining-Day": "0"}
+        if "ge_minute_quota" in str(exc):
+            return 429, "rate limit exceeded", {"Retry-After": str(60 - now.second), "X-RateLimit-Remaining-Day": str(max(0, rpd - used_d))}
+        raise
     return 200, "ok", {"X-RateLimit-Remaining-Day": str(rpd - used_d - 1), "X-RateLimit-Remaining-Minute": str(rpm - used_m - 1)}

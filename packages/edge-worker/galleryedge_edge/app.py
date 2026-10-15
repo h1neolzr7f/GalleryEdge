@@ -9,7 +9,7 @@ import hashlib
 import html
 import json
 import re
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from galleryedge_db import dialect as dialects
 
@@ -32,6 +32,14 @@ pre{white-space:pre-wrap;background:#161a22;border:1px solid #262c38;padding:12p
 
 def esc(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
+
+
+def safe_http_url(value) -> str | None:
+    try:
+        u = urlsplit(str(value or ""))
+        return str(value) if u.scheme.lower() in ("http", "https") and u.netloc else None
+    except (ValueError, TypeError):
+        return None
 
 
 def cover_svg(work_id: str, title: str) -> str:
@@ -172,7 +180,7 @@ class App:
         res = self.search(q, tag, artist, page)
         cards = "".join(
             f'<a class="card" href="/work/{esc(w["id"])}"><img src="/cover/{esc(w["id"])}.svg" alt="" loading="lazy"><div class="b"><h3>{esc(w["title"])}</h3>'
-            f'<div class="meta">{esc(w["artist"])} · {esc(w["license"])} · {w["image_count"]} 张</div>'
+            f'<div class="meta">{esc(w["artist"])} · {esc(w["license"])} · {esc(w["image_count"])} 张</div>'
             + "".join(f'<span class="tag">{esc(t)}</span>' for t in w["tags"]) + "</div></a>" for w in res["items"])
         filt = " · ".join(x for x in [f"标签 tag: <b>{esc(tag)}</b>" if tag else "", f"画师 artist: <b>{esc(artist)}</b>" if artist else ""] if x)
         tagbar = " ".join(f'<a class="tag" href="/?{urlencode({"tag": t["tag"]})}">{esc(t["tag"])} {t["n"]}</a>' for t in self.tags()[:20])
@@ -186,10 +194,13 @@ class App:
         return self._layout("搜索" if q else "首页", body, q)
 
     def _work_page(self, w) -> str:
+        source = safe_http_url(w["source_url"])
+        source_html = (f'<a href="{esc(source)}" rel="nofollow noopener">{esc(w["source_url"])}</a>'
+                       if source else esc(w["source_url"]))
         tags = "".join(f'<a class="tag" href="/?{urlencode({"tag": t})}">{esc(t)}</a>' for t in w["tags"])
         body = (f'<main style="max-width:900px"><img src="/cover/{esc(w["id"])}.svg" alt="" style="width:100%;max-width:480px;border-radius:12px">'
                 f'<h2>{esc(w["title"])}</h2><p class="meta">画师 <a href="/?{urlencode({"artist": w["artist"] or ""})}">{esc(w["artist"])}</a> · '
-                f'许可 {esc(w["license"])} · 来源 <a href="{esc(w["source_url"])}" rel="nofollow noopener">{esc(w["source_url"])}</a></p><p>{tags}</p>'
+                f'许可 {esc(w["license"])} · 来源 {source_html}</p><p>{tags}</p>'
                 f'<h3>提示词 Prompt</h3><pre id="prompt">{esc(w["prompt"])}</pre>'
                 f'<button id="copy" onclick="navigator.clipboard.writeText(document.getElementById(\'prompt\').innerText).then(()=>this.textContent=\'已复制 ✓\')">复制提示词 Copy</button></main>')
         return self._layout(w["title"], body)

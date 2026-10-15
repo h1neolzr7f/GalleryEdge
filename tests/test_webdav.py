@@ -98,3 +98,45 @@ def test_promote_skips_large_and_ledgers(tmp_path):
     r.put("big", b"12345"); r.is_up = lambda b: True
     r.get("big")
     assert conn.execute("SELECT backend_id FROM objects WHERE key='big'").fetchone() == ("cold",)
+
+
+
+def test_webdav_basic_credentials_not_forwarded_across_redirect(tmp_path):
+    """urllib's default redirect handler forwards Authorization: refuse redirects."""
+    import base64
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    calls = []
+    class Endpoint(BaseHTTPRequestHandler):
+        def do_GET(self):
+            calls.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+
+    sink = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+    sink_thread = threading.Thread(target=sink.serve_forever, daemon=True)
+    sink_thread.start()
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{sink.server_port}/stolen")
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    origin_thread = threading.Thread(target=origin.serve_forever, daemon=True)
+    origin_thread.start()
+    try:
+        dav = WebDAVBackend("dav", f"http://127.0.0.1:{origin.server_port}/",
+                            username="user", password="FAKE-token")
+        with pytest.raises(StorageError):
+            dav.get("private")
+        assert calls == []
+    finally:
+        origin.shutdown()
+        sink.shutdown()

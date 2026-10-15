@@ -1,7 +1,7 @@
 import { describe, it, expect, inject, beforeAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
-import worker, { Site, esc } from "../src/index";
+import worker, { Site, esc, safeHttpUrl } from "../src/index";
 import { Hrana, DBError } from "../src/db";
 import { sha256Hex, check } from "../src/keys";
 
@@ -132,5 +132,56 @@ describe("dialect", () => {
   it("Site.create reads dialect from meta", async () => {
     const s = await Site.create(env as any);
     expect((await s.search("qqqnoresult")).total).toBe(0);
+  });
+});
+
+
+
+describe("untrusted metadata links", () => {
+  it("allows only HTTP(S) destinations and escapes attributes", () => {
+    expect(safeHttpUrl("javascript:alert(1)")).toBeNull();
+    expect(safeHttpUrl("data:text/html,bad")).toBeNull();
+    expect(safeHttpUrl("https://example.org/works/1")).toBe("https://example.org/works/1");
+    const page = new Site({} as any).workPage({
+      id: "x", title: "work", artist: "a", license: "CC BY",
+      source_url: "javascript:alert(1)", license_url: "data:text/html,bad",
+      tags: [], prompt: "", attribution: ""
+    });
+    expect(page).not.toContain('href="javascript:');
+    expect(page).not.toContain('href="data:');
+    expect(page).toContain('来源 javascript:alert(1)');
+  });
+});
+
+
+
+describe("atomic API quota", () => {
+  it("never allows requests past a per-key limit under parallel checks", async () => {
+    const db = new Hrana(url);
+    await db.execute("INSERT OR IGNORE INTO api_plans VALUES ('ts-once',1,1)");
+    const k = await newKey(db, "ts-once");
+    const when = new Date(Date.UTC(2026, 9, 15, 3, 0, 0));
+    const responses = await Promise.all([check(db, k, when), check(db, k, when)]);
+    expect(responses.filter(x => x[0] === 200)).toHaveLength(1);
+    expect(responses.filter(x => x[0] === 429)).toHaveLength(1);
+    const d = await db.execute("SELECT count FROM usage_daily WHERE prefix=?", [k.split("_")[1]]);
+    expect(d.rows[0][0]).toBe(1);
+  });
+});
+
+
+
+describe("untrusted work metadata", () => {
+  it("HTML-escapes noninteger image_count in the homepage", async () => {
+    const site = new Site({} as any);
+    (site as any).search = async () => ({
+      items: [{ id: "x", title: "t", artist: "a", license: "CC0", cover_url: "",
+                tags: [], image_count: '<svg/onload=alert(1)>' }],
+      total: 1, page: 1,
+    });
+    (site as any).tags = async () => [];
+    const html = await site.index("", "", "", 1);
+    expect(html).not.toContain('<svg/onload=alert(1)>');
+    expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
   });
 });

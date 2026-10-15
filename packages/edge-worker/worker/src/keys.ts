@@ -1,5 +1,5 @@
 // Mirrors galleryedge_edge/keys.py (same tables, same SHA-256 key hashes).
-import { Hrana } from "./db";
+import { Hrana, DBError } from "./db";
 
 export async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -27,9 +27,17 @@ export async function check(db: Hrana, key: string | null, now = new Date()): Pr
   const usedD = d.rows.length ? Number(d.rows[0][0]) : 0, usedM = m.rows.length ? Number(m.rows[0][0]) : 0;
   if (usedD >= rpd) return [429, "daily quota exceeded", { "Retry-After": "3600", "X-RateLimit-Remaining-Day": "0" }];
   if (usedM >= rpm) return [429, "rate limit exceeded", { "Retry-After": String(60 - now.getUTCSeconds()), "X-RateLimit-Remaining-Day": String(rpd - usedD) }];
-  await db.batch([
-    ["INSERT INTO usage_daily VALUES (?,?,1) ON CONFLICT(prefix,day) DO UPDATE SET count=count+1", [prefix, day]],
-    ["INSERT INTO usage_minute VALUES (?,?,1) ON CONFLICT(prefix,minute) DO UPDATE SET count=count+1", [prefix, minute]],
-  ]);
+  try {
+    await db.batch([
+      ["INSERT INTO usage_daily VALUES (?,?,1) ON CONFLICT(prefix,day) DO UPDATE SET count=count+1", [prefix, day]],
+      ["INSERT INTO usage_minute VALUES (?,?,1) ON CONFLICT(prefix,minute) DO UPDATE SET count=count+1", [prefix, minute]],
+    ]);
+  } catch (e) {
+    if (e instanceof DBError && e.message.includes("ge_daily_quota"))
+      return [429, "daily quota exceeded", { "Retry-After": "3600", "X-RateLimit-Remaining-Day": "0" }];
+    if (e instanceof DBError && e.message.includes("ge_minute_quota"))
+      return [429, "rate limit exceeded", { "Retry-After": String(60 - now.getUTCSeconds()), "X-RateLimit-Remaining-Day": String(Math.max(0, rpd - usedD)) }];
+    throw e;
+  }
   return [200, "ok", { "X-RateLimit-Remaining-Day": String(rpd - usedD - 1), "X-RateLimit-Remaining-Minute": String(rpm - usedM - 1) }];
 }
