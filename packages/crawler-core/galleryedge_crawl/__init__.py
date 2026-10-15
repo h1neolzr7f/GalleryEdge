@@ -29,6 +29,18 @@ from galleryedge_pack import write_pack
 VERSION = "0.4"
 SKIP_STATUSES = {401: "login-wall", 402: "paywall", 403: "forbidden", 407: "proxy-auth", 429: "rate-limited"}
 LOGIN_HINTS = ("/login", "/signin", "/sign-in", "/account/login", "/auth")
+MAX_FETCH_BYTES = 5_000_000
+
+
+class ResponseTooLarge(ValueError):
+    pass
+
+
+def _read_bounded(stream) -> bytes:
+    body = stream.read(MAX_FETCH_BYTES + 1)
+    if len(body) > MAX_FETCH_BYTES:
+        raise ResponseTooLarge("crawler response exceeds 5 MB limit")
+    return body
 
 
 @dataclass
@@ -74,9 +86,9 @@ class HttpFetcher:
         req = urllib.request.Request(url, headers={"User-Agent": self.ua, "Accept": "text/html,application/json;q=0.9,*/*;q=0.5", **(headers or {})})
         try:
             with self.opener.open(req, timeout=self.timeout) as r:
-                return Response(url, r.status, dict(r.headers), r.read(5_000_000))
+                return Response(url, r.status, dict(r.headers), _read_bounded(r))
         except urllib.error.HTTPError as e:
-            return Response(url, e.code, dict(e.headers or {}), e.read() if e.fp else b"")
+            return Response(url, e.code, dict(e.headers or {}), _read_bounded(e) if e.fp else b"")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -262,6 +274,8 @@ class Crawler:
                     h = {k: x for k, x in (("If-None-Match", v[0]), ("If-Modified-Since", v[1])) if x} if v else {}
                     r = self.fetcher.get(url, headers=h) if h else self.fetcher.get(url)
                     break
+                except ResponseTooLarge:
+                    return Skip("response-too-large")
                 except (OSError, ValueError):
                     r = None
             if r is None:

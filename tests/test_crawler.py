@@ -236,3 +236,34 @@ def test_ingest_does_not_load_media_bytes(tmp_path, monkeypatch):
     schema.init(db, dialect.detect(db))
     assert galleryedge_ingest.ingest_pack(db, pack)["records"] == 1
     assert flags == [False]
+
+
+
+def test_http_fetcher_bounds_success_and_error_responses():
+    import io
+    import urllib.error
+    from galleryedge_crawl import HttpFetcher, MAX_FETCH_BYTES, ResponseTooLarge
+
+    class Success:
+        def __init__(self):
+            self.status = 200
+            self.headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, n=-1):
+            assert n == MAX_FETCH_BYTES + 1
+            return b"a" * n
+
+    class TooLargeSuccess:
+        def open(self, req, timeout):
+            return Success()
+
+    with pytest.raises(ResponseTooLarge):
+        HttpFetcher("GalleryEdge unit test", opener=TooLargeSuccess()).get("https://example.org/large")
+
+    class HugeError:
+        def open(self, req, timeout):
+            return urllib.error.HTTPError(req.full_url, 429, "rate limited", {},
+                                          io.BytesIO(b"x" * (MAX_FETCH_BYTES + 1)))
+    with pytest.raises(ResponseTooLarge):
+        HttpFetcher("GalleryEdge unit test", opener=HugeError()).get("https://example.org/too-large")
