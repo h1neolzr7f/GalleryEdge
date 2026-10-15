@@ -179,6 +179,14 @@ def test_setup_does_not_leak_vault_passphrase_into_npm(tmp_path, monkeypatch):
     secret = "FAKE-only-for-setup-very-long"
     monkeypatch.setenv("GE_VAULT_PASSPHRASE", "FAKE-preexisting-value")
     monkeypatch.setattr(shutil, "which", lambda program: "/usr/bin/npm")
+    # Other setup tests may already have built the shared frontend dist tree.
+    # Force this test through the npm branch independently of test order.
+    original_exists = Path.exists
+    def exists(path):
+        if path.name == "index.html" and path.parent.name == "dist" and path.parent.parent.name == "web":
+            return False
+        return original_exists(path)
+    monkeypatch.setattr(Path, "exists", exists)
     seen = []
     def fake_run(cmd, **kw):
         assert "GE_VAULT_PASSPHRASE" not in kw["env"]
