@@ -90,3 +90,48 @@ def test_restore_detects_tampering(tmp_path):
         f.write(data)
     with pytest.raises(ValueError, match="checksum"):
         backup.restore(connect(f"file:{tmp_path}/c.db"), p)
+
+
+
+def test_corrupted_backup_does_not_write_to_target(tmp_path):
+    import gzip
+    from galleryedge_db import backup, dialect, schema
+    from galleryedge_db.client import connect
+
+    src = connect(f"file:{tmp_path}/original.db")
+    schema.init(src, dialect.detect(src))
+    schema.ingest(src, [{"id": "w1", "title": "original", "source_url": "https://x.invalid/1",
+                         "license": "CC0", "rating": "general"}])
+    path = tmp_path / "snapshot.jsonl.gz"
+    backup.dump(src, path)
+    tampered = gzip.open(path, "rt").read().replace("original", "tampered")
+    with gzip.open(path, "wt") as f:
+        f.write(tampered)
+    dst = connect(f"file:{tmp_path}/restored.db")
+    with pytest.raises(ValueError, match="checksum"):
+        backup.restore(dst, path)
+    # No tables or rows were written before checksum validation.
+    assert dst.execute("SELECT count(*) FROM sqlite_master WHERE name='works'").rows == [(0,)]
+
+
+def test_db_dump_is_batched(tmp_path):
+    from galleryedge_db import backup, dialect, schema
+    from galleryedge_db.client import connect
+
+    db = connect(f"file:{tmp_path}/big.db")
+    schema.init(db, dialect.detect(db))
+    schema.ingest(db, [{"id": f"w{i}", "title": "test", "source_url": "https://x.invalid",
+                        "license": "CC0", "rating": "general"} for i in range(backup.BATCH + 3)])
+    class Instrumented:
+        def __init__(self, inner):
+            self.inner = inner
+            self.scans = 0
+        def execute(self, sql, args=()):
+            if "SELECT rowid" in sql:
+                self.scans += 1
+                assert "LIMIT ?" in sql
+            return self.inner.execute(sql, args)
+    spy = Instrumented(db)
+    man = backup.dump(spy, tmp_path / "batched.jsonl.gz")
+    assert man["tables"]["works"]["rows"] == backup.BATCH + 3
+    assert spy.scans >= 4  # works takes at least two pages; other tables too

@@ -10,6 +10,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from . import dialect as D, schema
@@ -20,30 +21,74 @@ BATCH = 200
 
 
 def dump(db, out: str | Path, tables=TABLES) -> dict:
+    """Stream the DB into gzip in bounded batches instead of materializing every row."""
+    if not set(tables).issubset(TABLES):
+        raise ValueError("unknown table in dump request")
     out = Path(out)
     man = {"format": "galleryedge-db-dump-v1", "tables": {}}
     h = hashlib.sha256()
     with gzip.open(out, "wt", encoding="utf-8") as f:
         for t in tables:
-            try:
-                r = db.execute(f"SELECT * FROM {t}")
-            except Exception:
-                continue
-            man["tables"][t] = {"columns": r.columns, "rows": len(r.rows)}
-            for row in r.rows:
-                line = json.dumps({"t": t, "v": list(row)}, ensure_ascii=False, default=str)
-                h.update(line.encode()); f.write(line + "\n")
+            last = 0
+            count = 0
+            while True:
+                # All GalleryEdge logical tables have ordinary SQLite rowids.
+                # Keyset pagination avoids O(N) OFFSET scans on large datasets.
+                r = db.execute(f"SELECT rowid, * FROM {t} WHERE rowid>? ORDER BY rowid LIMIT ?", [last, BATCH])
+                if t not in man["tables"]:
+                    man["tables"][t] = {"columns": r.columns[1:], "rows": 0}
+                for row in r.rows:
+                    last = int(row[0])
+                    line = json.dumps({"t": t, "v": list(row[1:])}, ensure_ascii=False, default=str)
+                    h.update(line.encode())
+                    f.write(line + "\n")
+                    count += 1
+                if len(r.rows) < BATCH:
+                    break
+            man["tables"][t]["rows"] = count
     man["sha256"] = h.hexdigest()
     Path(str(out) + ".manifest.json").write_text(json.dumps(man, indent=1))
     return man
 
 
+def _verify_dump(src: Path, man: dict) -> None:
+    """Check format, table/column identifiers, checksum and row counts *before* writing."""
+    if man.get("format") != "galleryedge-db-dump-v1":
+        raise ValueError("unknown dump format")
+    tables = man.get("tables")
+    if not isinstance(tables, dict) or not tables or not set(tables).issubset(TABLES):
+        raise ValueError("invalid dump table list")
+    for name, spec in tables.items():
+        cols = spec.get("columns")
+        if (not isinstance(cols, list) or not cols or
+                any(not isinstance(c, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", c) for c in cols) or
+                len(set(cols)) != len(cols) or
+                type(spec.get("rows")) is not int or spec["rows"] < 0):
+            raise ValueError(f"invalid dump columns/count for {name}")
+    counts = {name: 0 for name in tables}
+    h = hashlib.sha256()
+    with gzip.open(src, "rt", encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            h.update(line.encode())
+            item = json.loads(line)
+            t = item.get("t")
+            if t not in tables or not isinstance(item.get("v"), list) or len(item["v"]) != len(tables[t]["columns"]):
+                raise ValueError("invalid dump row")
+            counts[t] += 1
+    if h.hexdigest() != man.get("sha256"):
+        raise ValueError("dump checksum mismatch")
+    if any(counts[t] != tables[t]["rows"] for t in tables):
+        raise ValueError("dump row count mismatch")
+
+
 def restore(db, src: str | Path) -> dict:
     src = Path(src)
     man = json.loads(Path(str(src) + ".manifest.json").read_text())
+    _verify_dump(src, man)
     d = D.detect(db)
     schema.init(db, d)
-    if db.execute("SELECT count(*) FROM works").rows[0][0]:
+    if any(db.execute(f"SELECT count(*) FROM {t}").rows[0][0] for t in ("works", "work_tags")):
         raise ValueError("target DB is not empty; restore only into an empty database")
     h = hashlib.sha256(); pending: dict[str, list] = {}
     def flush(t):

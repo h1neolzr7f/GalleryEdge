@@ -1,7 +1,7 @@
 import { describe, it, expect, inject, beforeAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
-import worker, { Site, esc } from "../src/index";
+import worker, { Site, esc, safeHttpUrl } from "../src/index";
 import { Hrana, DBError } from "../src/db";
 import { sha256Hex, check } from "../src/keys";
 
@@ -132,5 +132,23 @@ describe("dialect", () => {
   it("Site.create reads dialect from meta", async () => {
     const s = await Site.create(env as any);
     expect((await s.search("qqqnoresult")).total).toBe(0);
+  });
+});
+
+
+
+describe("untrusted metadata links", () => {
+  it("allows only HTTP(S) destinations and escapes attributes", () => {
+    expect(safeHttpUrl("javascript:alert(1)")).toBeNull();
+    expect(safeHttpUrl("data:text/html,bad")).toBeNull();
+    expect(safeHttpUrl("https://example.org/works/1")).toBe("https://example.org/works/1");
+    const page = new Site({} as any).workPage({
+      id: "x", title: "work", artist: "a", license: "CC BY",
+      source_url: "javascript:alert(1)", license_url: "data:text/html,bad",
+      tags: [], prompt: "", attribution: ""
+    });
+    expect(page).not.toContain('href="javascript:');
+    expect(page).not.toContain('href="data:');
+    expect(page).toContain('来源 javascript:alert(1)');
   });
 });
