@@ -36,3 +36,26 @@ def test_cli_never_prints_key(tmp_path, capsys):
     k = out.read_text().strip()
     assert k.startswith("ge_") and k not in capsys.readouterr().out
     assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+
+def test_atomic_quota_triggers_reject_extra_writes(tmp_path):
+    import pytest
+    from galleryedge_db.client import DBError
+    usage = connect(f"file:{tmp_path}/quota.db")
+    keys.init_usage(usage)
+    usage.execute("INSERT INTO api_plans VALUES ('one',1,1)")
+    k = keys.create_key(usage, "one")
+    prefix = k.split("_")[1]
+    t = datetime(2026, 10, 15, 1, 2, tzinfo=timezone.utc)
+    assert keys.check(usage, k, t)[0] == 200
+    assert keys.check(usage, k, t)[0] == 429
+    with pytest.raises(DBError, match="ge_daily_quota"):
+        usage.batch([
+            ("INSERT INTO usage_daily VALUES (?,?,1) ON CONFLICT(prefix,day) DO UPDATE SET count=count+1",
+             (prefix, "2026-10-15")),
+            ("INSERT INTO usage_minute VALUES (?,?,1) ON CONFLICT(prefix,minute) DO UPDATE SET count=count+1",
+             (prefix, "2026-10-15T01:02")),
+        ])
+    assert usage.execute("SELECT count FROM usage_daily WHERE prefix=?", [prefix]).rows == [(1,)]
+    assert usage.execute("SELECT count FROM usage_minute WHERE prefix=?", [prefix]).rows == [(1,)]

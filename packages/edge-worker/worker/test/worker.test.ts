@@ -152,3 +152,19 @@ describe("untrusted metadata links", () => {
     expect(page).toContain('来源 javascript:alert(1)');
   });
 });
+
+
+
+describe("atomic API quota", () => {
+  it("never allows requests past a per-key limit under parallel checks", async () => {
+    const db = new Hrana(url);
+    await db.execute("INSERT OR IGNORE INTO api_plans VALUES ('ts-once',1,1)");
+    const k = await newKey(db, "ts-once");
+    const when = new Date(Date.UTC(2026, 9, 15, 3, 0, 0));
+    const responses = await Promise.all([check(db, k, when), check(db, k, when)]);
+    expect(responses.filter(x => x[0] === 200)).toHaveLength(1);
+    expect(responses.filter(x => x[0] === 429)).toHaveLength(1);
+    const d = await db.execute("SELECT count FROM usage_daily WHERE prefix=?", [k.split("_")[1]]);
+    expect(d.rows[0][0]).toBe(1);
+  });
+});

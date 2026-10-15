@@ -7,3 +7,9 @@
 - **清理** `ge-ops cleanup plan` / `apply --yes`：不加 `--yes` 一律 dry-run。只删 `.verified_remote` 标记的包目录里的文件，以及带匹配 size+sha256 的 `.uploaded` 标记的 tar。账本（done.txt / seen.txt / packed_works.txt / prompts.jsonl）、manifest、`.vault`、未上传 tar、`staging/` 与带 `.inprogress`/`.lock` 的目录、符号链接永不删除；每个文件删除前再检查一次。
 - **审计/事件** `ge-ops audit` / `ge-ops events`：所有写入都经过脱敏。
 - **数据库**：主库 Turso/libSQL（`libsql://` 需 `pip install galleryedge[libsql]`，令牌用 `auth_token_ref`）；本地开发和测试用 SQLite 文件，SQL 与 libSQL 兼容。
+
+
+## API 配额并发保护（v1.0.1 修复）
+
+分钟/日配额使用数据库触发器保护每次计数写入，避免多个并发请求在读取旧额度后同时超额放行；超额事务会回滚并返回 429。
+**升级已经存在的独立 usage 数据库必须先运行** `ge-keys --db <usage-url> --token-file <rw-token-file> init`，让触发器就位，再开放高并发 API 流量。主内容库的无前缀本地测试在 `schema.init` 时创建相同保护；已有数据库也应先运行初始化迁移。
