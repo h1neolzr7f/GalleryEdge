@@ -13,6 +13,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
+from urllib.request import HTTPRedirectHandler
 from typing import Protocol
 
 LEDGERS = frozenset({"done.txt", "seen.txt", "packed_works.txt", "prompts.jsonl"})
@@ -198,7 +199,7 @@ CREATE TABLE IF NOT EXISTS usage_snapshots(ts TEXT NOT NULL, meter TEXT NOT NULL
 """
 
 
-class _SameOriginRedirect(__import__("urllib.request", fromlist=["HTTPRedirectHandler"]).HTTPRedirectHandler):
+class _SameOriginRedirect(HTTPRedirectHandler):
     """Never forward a WebDAV Basic Authorization header to a new origin."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -295,22 +296,45 @@ class WebDAVBackend:
             return []
         if st != 207:
             raise StorageError(f"{self.id}: PROPFIND {path} -> {st}")
-        base_path = urlsplit(self.base).path
+        base = urlsplit(self.base)
+        base_path = base.path if base.path.endswith("/") else base.path + "/"
         out = []
         for r in ET.fromstring(xml).findall("{DAV:}response"):
-            href = unquote(urlsplit(r.findtext("{DAV:}href") or "").path)
-            rel = href[len(base_path):] if href.startswith(base_path) else href.lstrip("/")
-            if rel.rstrip("/") == path.rstrip("/"):
+            href = urlsplit(r.findtext("{DAV:}href") or "")
+            # A WebDAV server is not allowed to steer directory traversal
+            # outside the configured URL namespace, even via absolute hrefs.
+            if href.netloc and (href.scheme.lower(), href.netloc.lower()) != (base.scheme.lower(), base.netloc.lower()):
+                continue
+            absolute = unquote(href.path)
+            if not absolute.startswith(base_path):
+                continue
+            rel = absolute[len(base_path):]
+            if not rel or rel.rstrip("/") == path.rstrip("/"):
+                continue
+            try:
+                check_key(rel)
+            except StorageError:
+                continue
+            # Depth:1 must contain only direct children of the requested path.
+            if not rel.startswith(path):
+                continue
+            tail = rel[len(path):].strip("/")
+            if not tail or "/" in tail:
                 continue
             is_dir = r.find(".//{DAV:}collection") is not None
             size = int(r.findtext(".//{DAV:}getcontentlength") or 0)
             out.append((rel, is_dir, size))
         return out
 
-    def _walk(self, path=""):
+    def _walk(self, path="", _seen=None):
+        if _seen is None:
+            _seen = set()
+        if path in _seen or len(_seen) >= 10000:
+            raise StorageError(f"{self.id}: cyclic or oversized WebDAV directory tree")
+        _seen.add(path)
         for rel, is_dir, size in self._propfind(path):
             if is_dir:
-                yield from self._walk(rel if rel.endswith("/") else rel + "/")
+                yield from self._walk(rel if rel.endswith("/") else rel + "/", _seen)
             else:
                 yield rel, size
 

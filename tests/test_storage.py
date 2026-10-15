@@ -210,3 +210,31 @@ def test_promotion_keeps_newer_version(conn):
     assert conn.execute("SELECT backend_id FROM objects WHERE key='key'").fetchone() == ("cold",)
     assert cold.get("key") == b"new"
     assert router.get("key") == b"new"
+
+
+def test_webdav_directory_entries_must_stay_inside_base_path():
+    import io
+    from galleryedge_storage import WebDAVBackend
+    class Response207:
+        status = 207
+        headers = {}
+        def __init__(self, body):
+            self.body = io.BytesIO(body)
+        def read(self):
+            return self.body.read()
+        def __enter__(self): return self
+        def __exit__(self, *exc): pass
+    class Opener:
+        def open(self, req, timeout):
+            assert req.get_method() == "PROPFIND"
+            body = """<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+            <d:response><d:href>/base/</d:href></d:response>
+            <d:response><d:href>/base/inside.txt</d:href><d:propstat><d:prop><d:getcontentlength>3</d:getcontentlength></d:prop></d:propstat></d:response>
+            <d:response><d:href>/other/outside.txt</d:href></d:response>
+            <d:response><d:href>http://evil.invalid/base/forged.txt</d:href></d:response>
+            <d:response><d:href>/base/../outside.txt</d:href></d:response>
+            </d:multistatus>"""
+            return Response207(body.encode())
+    dav = WebDAVBackend("dav", "http://dav.invalid/base/", opener=Opener())
+    assert dav.list() == ["inside.txt"]
+    assert dav.usage() == (3, 1)
