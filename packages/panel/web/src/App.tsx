@@ -13,6 +13,13 @@ function useLoad<T>(path: string, deps: unknown[] = []) {
   return { data, err, reload };
 }
 
+function safeExternalUrl(value: unknown): string | undefined {
+  try {
+    const url = new URL(String(value ?? ""));
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : undefined;
+  } catch { return undefined; }
+}
+
 const Badge = ({ v }: { v: string }) => <span className={`badge b-${v}`}>{v}</span>;
 
 export function StatusView() {
@@ -340,8 +347,8 @@ export function ContentView() {
     <form className="row" onSubmit={e => { e.preventDefault(); setPath(`/api/content?q=${encodeURIComponent(q)}`); }}>
       <input placeholder="搜索（中文/英文）" value={q} onChange={e => setQ(e.target.value)} /><button type="submit">搜索</button></form>
     <table><thead><tr><th></th><th>标题</th><th>作者</th><th>许可</th></tr></thead><tbody>
-      {rows.map((r: any) => <tr key={r[0]}><td>{r[5] && <img src={r[5]} alt="" width={64} loading="lazy" referrerPolicy="no-referrer" />}</td>
-        <td><a href={r[4]} target="_blank" rel="noreferrer">{r[1]}</a></td><td>{r[2]}</td><td>{r[3]}</td></tr>)}
+      {rows.map((r: any) => <tr key={r[0]}><td>{safeExternalUrl(r[5]) && <img src={safeExternalUrl(r[5])} alt="" width={64} loading="lazy" referrerPolicy="no-referrer" />}</td>
+        <td>{safeExternalUrl(r[4]) ? <a href={safeExternalUrl(r[4])} target="_blank" rel="noreferrer">{r[1]}</a> : r[1]}</td><td>{r[2]}</td><td>{r[3]}</td></tr>)}
     </tbody></table>
   </div>);
 }
