@@ -178,3 +178,40 @@ def test_crawler_events_reach_panel_status(source, tmp_path):
     st = tc.get("/api/status").json()["crawler"]
     assert st["last_code"] == "crawler.done" and st["stats"]["records"] == 45
     assert st["skip_reasons"] == {"login-wall": 2, "no-license": 1, "paywall": 1, "robots-disallow": 1}
+
+
+def test_crawler_limits_error_response_bytes():
+    import io
+    import urllib.error
+    from galleryedge_crawl import HttpFetcher
+    class FakeOpener:
+        def open(self, req, timeout):
+            raise urllib.error.HTTPError(req.full_url, 429, "too many", {}, io.BytesIO(b"x" * 5_000_100))
+    r = HttpFetcher("GalleryEdge-test (ops@example.com)", opener=FakeOpener()).get("https://demo.invalid/fail")
+    assert r.status == 429 and len(r.body) == 5_000_000
+
+
+def test_redirect_uses_destination_host_rate_limit(tmp_path):
+    from galleryedge_crawl import Skip
+    t = [0.0]
+    waits = []
+    class F:
+        ua = "GalleryEdge-Crawler (ops@example.com)"
+        def get(self, url, headers=None):
+            if url.endswith("/robots.txt"):
+                return Response(url, 200, {}, b"User-agent: *\nDisallow:\n")
+            if url == "https://a.test/item":
+                return Response(url, 302, {"Location": "https://b.test/item"}, b"")
+            return Response(url, 200, {}, b"ok")
+    class A:
+        name = "redirects"
+        def start_urls(self): return []
+        def parse(self, resp): return []
+    crawler = Crawler(A(), CrawlConfig(contact="ops@example.com", allowed_hosts=["a.test", "b.test"],
+                                       min_interval_s=1), state_path=str(tmp_path / "state.db"),
+                      out_dir=str(tmp_path / "packs"), fetcher=F(),
+                      clock=lambda: t[0],
+                      sleep=lambda seconds: (waits.append(seconds), t.__setitem__(0, t[0]+seconds)))
+    r = crawler._fetch("https://a.test/item")
+    assert isinstance(r, Response) and r.url == "https://b.test/item"
+    assert t[0] >= 2.0  # a.test and b.test must each respect interval after robots
