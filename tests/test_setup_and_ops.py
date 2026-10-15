@@ -169,3 +169,25 @@ def test_abandoned_running_job_is_marked_interrupted(tmp_path):
         assert "中断" in job["message"]
     finally:
         runner.stop()
+
+
+
+def test_setup_does_not_leak_vault_passphrase_into_npm(tmp_path, monkeypatch):
+    import subprocess
+    import shutil
+    from galleryedge_ops import setup
+    secret = "FAKE-only-for-setup-very-long"
+    monkeypatch.setenv("GE_VAULT_PASSPHRASE", "FAKE-preexisting-value")
+    monkeypatch.setattr(shutil, "which", lambda program: "/usr/bin/npm")
+    seen = []
+    def fake_run(cmd, **kw):
+        assert "GE_VAULT_PASSPHRASE" not in kw["env"]
+        assert secret not in repr(kw)
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    data = tmp_path / "isolated"
+    setup.apply(data, username="admin", password=ADMIN_PW, vault_passphrase=secret)
+    assert seen == [["npm", "ci"], ["npm", "run", "build"]]
+    assert os.environ["GE_VAULT_PASSPHRASE"] == "FAKE-preexisting-value"
+    assert (data / "var/vault-passphrase.txt").read_text().strip() == secret
