@@ -19,6 +19,9 @@ FORMAT = "site-pack-v1"
 REQUIRED = ("id", "title", "source_url", "license", "rating")
 PROVENANCE_REQUIRED = ("adapter", "fetched_at", "fetch_url", "robots", "content_sha256")
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+MAX_PACK_MEMBERS = 100_000
+MAX_MANIFEST_BYTES = 8 * 1024 * 1024
+MAX_RECORD_BYTES = 256 * 1024 * 1024
 
 
 class PackError(ValueError):
@@ -69,28 +72,64 @@ def write_pack(path: str | Path, pack_id: str, adapter: str, records: list[dict]
     return man
 
 
-def read_pack(path: str | Path) -> tuple[dict, list[dict], dict[str, bytes]]:
+def read_pack(path: str | Path, *, include_media: bool = True) -> tuple[dict, list[dict], dict[str, bytes]]:
+    """Verify *all* members. Metadata-only ingesters never materialize media bytes."""
     files: dict[str, bytes] = {}
+    verified: dict[str, tuple[str, int]] = {}
     with tarfile.open(path, "r:") as tf:
-        for m in tf.getmembers():
-            if not m.isfile() or m.name.startswith("/") or ".." in m.name.split("/"):
-                raise PackError(f"unsafe member {m.name!r}")
-            files[m.name] = tf.extractfile(m).read()
+        for i, m in enumerate(tf):
+            if i >= MAX_PACK_MEMBERS:
+                raise PackError("too many archive members")
+            name = m.name
+            if (not m.isfile() or name.startswith("/") or ".." in name.split("/")
+                    or name not in ("manifest.json", "works.jsonl") and not name.startswith("media/")
+                    or name in verified):
+                raise PackError(f"unsafe or duplicate member {name!r}")
+            if name == "manifest.json" and m.size > MAX_MANIFEST_BYTES:
+                raise PackError("manifest too large")
+            if name == "works.jsonl" and m.size > MAX_RECORD_BYTES:
+                raise PackError("records too large")
+            stream = tf.extractfile(m)
+            if stream is None:
+                raise PackError(f"unreadable member {name!r}")
+            should_keep = name in ("manifest.json", "works.jsonl") or include_media
+            buf = bytearray() if should_keep else None
+            digest = hashlib.sha256()
+            total = 0
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                total += len(chunk)
+                if buf is not None:
+                    buf.extend(chunk)
+            verified[name] = (digest.hexdigest(), total)
+            if buf is not None:
+                files[name] = bytes(buf)
+    if "manifest.json" not in files or "works.jsonl" not in files:
+        raise PackError("missing manifest.json or works.jsonl")
     try:
         man = json.loads(files.pop("manifest.json"))
-    except KeyError:
-        raise PackError("missing manifest.json") from None
-    if man.get("format") != FORMAT:
+    except (ValueError, TypeError):
+        raise PackError("invalid manifest.json") from None
+    if not isinstance(man, dict) or man.get("format") != FORMAT:
         raise PackError("unsupported pack format")
-    if set(man["files"]) != set(files):
+    manifest_files = man.get("files")
+    if not isinstance(manifest_files, dict) or set(manifest_files) != set(verified) - {"manifest.json"}:
         raise PackError("manifest file list mismatch")
-    for n, meta in man["files"].items():
-        if sha256(files[n]) != meta["sha256"] or len(files[n]) != meta["size"]:
-            raise PackError(f"checksum mismatch: {n}")
-    records = [json.loads(l) for l in files["works.jsonl"].decode().splitlines() if l.strip()]
-    if len(records) != man["record_count"]:
+    for name, meta in manifest_files.items():
+        if (not isinstance(meta, dict) or
+                meta.get("sha256") != verified[name][0] or
+                meta.get("size") != verified[name][1]):
+            raise PackError(f"checksum mismatch: {name}")
+    try:
+        records = [json.loads(line) for line in files["works.jsonl"].decode("utf-8").splitlines() if line.strip()]
+    except (ValueError, UnicodeDecodeError):
+        raise PackError("invalid works.jsonl") from None
+    if len(records) != man.get("record_count"):
         raise PackError("record_count mismatch")
     for r in records:
-        if validate_record(r):
-            raise PackError(f"invalid record {r.get('id')}: {validate_record(r)}")
-    return man, records, {n[6:]: b for n, b in files.items() if n.startswith("media/")}
+        if not isinstance(r, dict) or validate_record(r):
+            raise PackError(f"invalid record: {r.get('id') if isinstance(r, dict) else '<non-object>'}")
+    return man, records, {name[6:]: data for name, data in files.items() if name.startswith("media/")}

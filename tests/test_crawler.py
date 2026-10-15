@@ -178,3 +178,61 @@ def test_crawler_events_reach_panel_status(source, tmp_path):
     st = tc.get("/api/status").json()["crawler"]
     assert st["last_code"] == "crawler.done" and st["stats"]["records"] == 45
     assert st["skip_reasons"] == {"login-wall": 2, "no-license": 1, "paywall": 1, "robots-disallow": 1}
+
+
+
+def test_archive_rejects_duplicate_members_and_verifies_unloaded_media(tmp_path):
+    import io
+    from galleryedge_pack import PackError, read_pack, write_pack
+    rec = {"id": "w1", "title": "test", "source_url": "https://x.invalid/w1",
+           "license": "CC0", "rating": "general",
+           "provenance": {"adapter": "synthetic", "fetched_at": "now",
+                          "fetch_url": "https://x.invalid/w1", "robots": "allowed",
+                          "content_sha256": "0" * 64}}
+    archive = tmp_path / "ok.tar"
+    write_pack(archive, "safe-00001", "synthetic", [rec], {"photo.bin": b"data"})
+    man, records, media = read_pack(archive, include_media=False)
+    assert man["record_count"] == 1 and len(records) == 1 and media == {}
+    assert read_pack(archive)[2] == {"photo.bin": b"data"}
+
+    duplicate = tmp_path / "duplicate.tar"
+    with tarfile.open(archive, "r:") as source, tarfile.open(duplicate, "w") as dest:
+        for member in source:
+            content = source.extractfile(member).read()
+            dest.addfile(member, io.BytesIO(content))
+            if member.name == "media/photo.bin":
+                dest.addfile(member, io.BytesIO(content))
+    with pytest.raises(PackError, match="duplicate"):
+        read_pack(duplicate, include_media=False)
+
+    tampered = tmp_path / "tampered-media.tar"
+    with tarfile.open(archive, "r:") as source, tarfile.open(tampered, "w") as dest:
+        for member in source:
+            content = source.extractfile(member).read()
+            if member.name == "media/photo.bin":
+                content = b"evil"
+            member.size = len(content)
+            dest.addfile(member, io.BytesIO(content))
+    with pytest.raises(PackError, match="checksum"):
+        read_pack(tampered, include_media=False)
+
+
+def test_ingest_does_not_load_media_bytes(tmp_path, monkeypatch):
+    import galleryedge_ingest
+    from galleryedge_pack import write_pack
+    from galleryedge_db import schema, dialect, client
+    rec = {"id": "w1", "title": "t", "source_url": "https://x.invalid/1", "license": "CC0",
+           "rating": "general", "provenance": {"adapter": "synthetic", "fetched_at": "now",
+           "fetch_url": "https://x.invalid/1", "robots": "allowed", "content_sha256": "a" * 64}}
+    pack = tmp_path / "ingest.tar"
+    write_pack(pack, "test-00001", "synthetic", [rec], {"large.bin": b"z" * (2 * 1024 * 1024)})
+    original = galleryedge_ingest.read_pack
+    flags = []
+    def recording_reader(*args, **kwargs):
+        flags.append(kwargs.get("include_media"))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(galleryedge_ingest, "read_pack", recording_reader)
+    db = client.SqliteClient(":memory:")
+    schema.init(db, dialect.detect(db))
+    assert galleryedge_ingest.ingest_pack(db, pack)["records"] == 1
+    assert flags == [False]
