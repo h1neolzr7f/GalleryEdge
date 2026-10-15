@@ -106,3 +106,20 @@ def test_healthz_and_cli(tmp_path, capsys):
     app = App(C.connect(url))
     assert json.loads(call(app, "/healthz")[2]) == {"ok": True, "fts": "fts5"}
     assert call(app, "/api/v1/search", k)[0] == 200
+
+
+
+def test_image_count_html_escaping_and_unsafe_source_url(site):
+    app, db = site
+    first_id = app.search()["items"][0]["id"]
+    injected = '<svg/onload=alert(1)>'
+    db.execute("UPDATE works SET image_count=?,source_url=? WHERE id=?",
+               [injected, "javascript:alert(1)", first_id])
+    status, _, html = call(app, "/")
+    assert status == 200
+    assert injected not in html
+    assert "&lt;svg/onload=alert(1)&gt;" in html
+    status, _, detail = call(app, "/work/" + first_id)
+    assert status == 200
+    assert 'href="javascript:' not in detail
+    assert "javascript:alert(1)" in detail

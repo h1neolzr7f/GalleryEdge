@@ -153,7 +153,7 @@ export class Site {
 
   async index(q: string, tag: string, artist: string, page: number): Promise<string> {
     const res = await this.search(q, tag, artist, page);
-    const cards = res.items.map((w: any) => `<a class="card" href="/work/${esc(w.id)}"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" loading="lazy" referrerpolicy="no-referrer"><div class="b"><h3>${esc(w.title)}</h3><div class="meta">${esc(w.artist)} · ${esc(w.license)} · ${w.image_count} 张</div>${w.tags.map((t: string) => `<span class="tag">${esc(t)}</span>`).join("")}</div></a>`).join("");
+    const cards = res.items.map((w: any) => `<a class="card" href="/work/${esc(w.id)}"><img src="${esc(coverSrc(w))}" alt="${esc(w.title)}" loading="lazy" referrerpolicy="no-referrer"><div class="b"><h3>${esc(w.title)}</h3><div class="meta">${esc(w.artist)} · ${esc(w.license)} · ${esc(w.image_count)} 张</div>${w.tags.map((t: string) => `<span class="tag">${esc(t)}</span>`).join("")}</div></a>`).join("");
     const filt = [tag ? `标签 tag: <b>${esc(tag)}</b>` : "", artist ? `画师 artist: <b>${esc(artist)}</b>` : ""].filter(Boolean).join(" · ");
     const tagbar = (await this.tags()).slice(0, 20).map((t: any) => `<a class="tag" href="/?${qs({ tag: t.tag })}">${esc(t.tag)} ${t.n}</a>`).join(" ");
     const pages = Math.max(1, Math.ceil(res.total / PAGE));

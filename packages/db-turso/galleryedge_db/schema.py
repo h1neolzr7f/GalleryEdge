@@ -80,6 +80,9 @@ def ingest(client, works: list[dict], batch_size: int = 200, stats: dict | None 
             for k in ("id", "title", "source_url", "license", "rating"):
                 if not w.get(k):
                     raise ValueError(f"work {w.get('id')!r} missing required field {k}")
+            count = w.get("image_count", 1)
+            if type(count) is not int or not 0 <= count <= 1_000_000:
+                raise ValueError(f"work {w.get('id')!r} invalid image_count")
             items.append(("DELETE FROM works WHERE id=?", (w["id"],)))
             items.append(("DELETE FROM work_tags WHERE work_id=?", (w["id"],)))
             items.append(("INSERT INTO works(id,title,prompt,source_url,license,rights_note,rating,artist,tags_text,image_count,cover_key,created_at,retrieved_at,pack_id,synthetic,search_text,author,license_url,attribution,cover_url)"

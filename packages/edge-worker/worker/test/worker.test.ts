@@ -168,3 +168,20 @@ describe("atomic API quota", () => {
     expect(d.rows[0][0]).toBe(1);
   });
 });
+
+
+
+describe("untrusted work metadata", () => {
+  it("HTML-escapes noninteger image_count in the homepage", async () => {
+    const site = new Site({} as any);
+    (site as any).search = async () => ({
+      items: [{ id: "x", title: "t", artist: "a", license: "CC0", cover_url: "",
+                tags: [], image_count: '<svg/onload=alert(1)>' }],
+      total: 1, page: 1,
+    });
+    (site as any).tags = async () => [];
+    const html = await site.index("", "", "", 1);
+    expect(html).not.toContain('<svg/onload=alert(1)>');
+    expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
+  });
+});
