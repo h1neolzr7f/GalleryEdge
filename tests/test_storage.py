@@ -117,3 +117,96 @@ def test_forecast_and_cost(conn):
     assert f["value"] == 1900 and round(f["per_day"]) == 100 and round(f["days_to_quota"]) == 11 and f["ratio"] == pytest.approx(1900 / 3000)
     assert forecast(conn, "none", 10, now=NOW)["value"] is None
     assert monthly_cost(25e9, 2e6, 0.015, 0.36, free_gb=10) == pytest.approx(15 * 0.015 + 2 * 0.36)
+
+
+def test_local_backend_refuses_symlink_escape(tmp_path):
+    root, outside = tmp_path / "store", tmp_path / "external"
+    outside.mkdir()
+    (outside / "secret.bin").write_bytes(b"private data")
+    b = LocalBackend("local", str(root))
+    try:
+        (root / "escape").symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlink creation unsupported")
+    with pytest.raises(StorageError, match="escapes"):
+        b.get("escape/secret.bin")
+    with pytest.raises(StorageError, match="escapes"):
+        b.put("escape/new.bin", b"untrusted")
+    with pytest.raises(StorageError, match="escapes"):
+        b.delete("escape/secret.bin")
+    assert (outside / "secret.bin").read_bytes() == b"private data"
+    assert not (outside / "new.bin").exists()
+    assert "escape/secret.bin" not in b.list()
+    assert b.usage() == (0, 0)
+
+
+def test_migrate_does_not_delete_new_version_written_during_copy(conn):
+    hot = MemoryBackend("hot")
+    cold = MemoryBackend("cold", "cold")
+    router = Router(conn, [hot, cold], [Rule("hot")])
+    router.put("key", b"old")
+    class ReentrantCold(MemoryBackend):
+        def put(self, key, data):
+            router.put(key, b"new")
+            super().put(key, data)
+    router.b["cold"] = ReentrantCold("cold", "cold")
+    result = migrate(router, [Move("key", "hot", "cold", 3)], dry_run=False)
+    assert result["moved"] == []
+    assert "changed" in result["failed"][0][1]
+    assert conn.execute("SELECT backend_id FROM objects WHERE key='key'").fetchone() == ("hot",)
+    assert hot.get("key") == b"new"
+    assert router.get("key") == b"new"
+
+
+def test_webdav_never_redirects_basic_auth_to_another_origin():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from galleryedge_storage import WebDAVBackend
+    import threading
+
+    leaked = []
+    class Attacker(BaseHTTPRequestHandler):
+        def do_GET(self):
+            leaked.append(self.headers.get("Authorization"))
+            self.send_response(200); self.end_headers(); self.wfile.write(b"bad")
+        def log_message(self, *args):
+            pass
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Attacker)
+    class Redirector(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{target.server_port}/collect")
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+    original = ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+    threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (target, original)]
+    for t in threads: t.start()
+    try:
+        dav = WebDAVBackend("dav", f"http://127.0.0.1:{original.server_port}/",
+                            username="fake", password="FAKE-test-secret")
+        with pytest.raises(StorageError):
+            dav.get("some.bin")
+        assert leaked == []  # no cross-origin request, not merely stripped credentials
+    finally:
+        original.shutdown()
+        target.shutdown()
+
+
+def test_promotion_keeps_newer_version(conn):
+    cold = MemoryBackend("cold", "cold")
+    hot = MemoryBackend("hot")
+    router = Router(conn, [hot, cold], [Rule("hot"), Rule("cold")],
+                    is_up=lambda name: name == "cold", promote_on_read=True)
+    router.put("key", b"old")
+    router.is_up = lambda name: True
+    class RacingHot(MemoryBackend):
+        def put(self, key, data):
+            cold.put(key, b"new")
+            conn.execute("UPDATE objects SET sha256=? WHERE key=?", (__import__("hashlib").sha256(b"new").hexdigest(), key))
+            conn.commit()
+            super().put(key, data)
+    router.b["hot"] = RacingHot("hot")
+    assert router.get("key") == b"old"
+    assert conn.execute("SELECT backend_id FROM objects WHERE key='key'").fetchone() == ("cold",)
+    assert cold.get("key") == b"new"
+    assert router.get("key") == b"new"

@@ -76,7 +76,7 @@ class HttpFetcher:
             with self.opener.open(req, timeout=self.timeout) as r:
                 return Response(url, r.status, dict(r.headers), r.read(5_000_000))
         except urllib.error.HTTPError as e:
-            return Response(url, e.code, dict(e.headers or {}), e.read() if e.fp else b"")
+            return Response(url, e.code, dict(e.headers or {}), e.read(5_000_000) if e.fp else b"")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -249,11 +249,13 @@ class Crawler:
         ok, why = self.allowed(url)
         if not ok:
             return Skip(why)
-        host = self._host(url)
-        rp = self.robots[host]
-        delay = (rp.crawl_delay(self.fetcher.ua if hasattr(self.fetcher, "ua") else "*") or 0) if rp else 0
         backoffs = 0
         for _ in range(self.cfg.max_redirects + 1 + self.cfg.max_backoff_retries):
+            # Redirects may change host; use that host's robots delay and
+            # per-host interval for *every* subsequent network request.
+            host = self._host(url)
+            rp = self.robots[host]
+            delay = (rp.crawl_delay(self.fetcher.ua if hasattr(self.fetcher, "ua") else "*") or 0) if rp else 0
             r = None
             for attempt in range(2):  # one polite retry on network errors, then skip
                 self._wait(host, float(delay) + 5.0 * attempt)

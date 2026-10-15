@@ -61,7 +61,13 @@ class LocalBackend:
             raise StorageError(f"{self.id}: read-only backend")
 
     def _p(self, key):
-        return self.root / check_key(key)
+        # Lexical ".." checks alone cannot stop an existing symlink inside the
+        # storage directory from redirecting reads/writes outside of it.
+        root = self.root.resolve()
+        path = (self.root / check_key(key)).resolve()
+        if not path.is_relative_to(root):
+            raise StorageError(f"{self.id}: key escapes local storage root")
+        return path
 
     def put(self, key, data):
         self._rw()
@@ -79,19 +85,33 @@ class LocalBackend:
 
     def head(self, key):
         p = self._p(key)
-        return Head(p.stat().st_size, sha(p.read_bytes())) if p.is_file() else None
+        if not p.is_file():
+            return None
+        # Avoid reading multi-GB objects into memory merely to check integrity.
+        h = hashlib.sha256()
+        with p.open("rb") as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
+        return Head(p.stat().st_size, h.hexdigest())
 
     def delete(self, key):
         self._rw()
         self._p(key).unlink(missing_ok=True)
 
     def list(self, prefix=""):
-        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*") if p.is_file() and not p.name.startswith(".put-")
+        root = self.root.resolve()
+        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*")
+                      if p.is_file() and p.resolve().is_relative_to(root) and not p.name.startswith(".put-")
                       and str(p.relative_to(self.root)).startswith(prefix))
 
     def usage(self):
-        files = [p for p in self.root.rglob("*") if p.is_file()]
-        return sum(p.stat().st_size for p in files), len(files)
+        root = self.root.resolve()
+        total = count = 0
+        for p in self.root.rglob("*"):
+            if p.is_file() and p.resolve().is_relative_to(root):
+                total += p.stat().st_size
+                count += 1
+        return total, count
 
 
 class MemoryBackend:
@@ -178,6 +198,20 @@ CREATE TABLE IF NOT EXISTS usage_snapshots(ts TEXT NOT NULL, meter TEXT NOT NULL
 """
 
 
+class _SameOriginRedirect(__import__("urllib.request", fromlist=["HTTPRedirectHandler"]).HTTPRedirectHandler):
+    """Never forward a WebDAV Basic Authorization header to a new origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from urllib.parse import urlsplit
+
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        def origin(u):
+            return (u.scheme.lower(), u.hostname, u.port or (443 if u.scheme == "https" else 80))
+        if origin(old) != origin(new):
+            return None  # urllib surfaces a 3xx HTTPError; the caller rejects it.
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class WebDAVBackend:
     """Generic WebDAV (RFC 4918) backend: Nextcloud/ownCloud, Synology, Box/pCloud/Koofr WebDAV, rclone serve webdav...
     Uses PUT/GET/HEAD/DELETE/MKCOL/PROPFIND only; credentials (basic auth) come from the vault, never from config."""
@@ -191,7 +225,7 @@ class WebDAVBackend:
         if username is not None:
             import base64
             self._auth = "Basic " + base64.b64encode(f"{username}:{password or ''}".encode()).decode()
-        self.opener = opener or urllib.request.build_opener()
+        self.opener = opener or urllib.request.build_opener(_SameOriginRedirect())
         self._dirs: set[str] = set()
 
     def _req(self, method, key="", data=None, headers=None, ok=(200, 201, 204, 207)):
@@ -361,7 +395,14 @@ class Router:
             except StorageError as e:
                 self.emit("warn", "storage.promote_failed", f"promote {key} to {be.id} failed: {e}"); continue
             t = _iso(now or _now())
-            self.conn.execute("UPDATE objects SET backend_id=?, tier=?, last_access=? WHERE key=?", (be.id, be.tier, t, key)); self.conn.commit()
+            cur = self.conn.execute(
+                "UPDATE objects SET backend_id=?, tier=?, last_access=? WHERE key=? AND backend_id=? AND sha256=? AND state='stored'",
+                (be.id, be.tier, t, key, src_id, sha(data)),
+            )
+            self.conn.commit()
+            if cur.rowcount != 1:
+                self.emit("warn", "storage.promote_stale", f"{key}: changed during promote; source kept")
+                return None
             src = self.b[src_id]
             if not getattr(src, "read_only", False) and not protected(key):
                 try:
@@ -425,7 +466,14 @@ def migrate(router: Router, moves: list[Move], *, dry_run: bool = True) -> dict:
             failed.append((m.key, str(e)))
             router.emit("error", "storage.migrate.failed", f"{m.key}: {e} (source kept)")
             continue
-        router.conn.execute("UPDATE objects SET backend_id=?, tier=? WHERE key=?", (dst.id, dst.tier, m.key)); router.conn.commit()
+        cur = router.conn.execute(
+            "UPDATE objects SET backend_id=?, tier=? WHERE key=? AND backend_id=? AND sha256=? AND state='stored'",
+            (dst.id, dst.tier, m.key, m.src, want),
+        )
+        router.conn.commit()
+        if cur.rowcount != 1:
+            failed.append((m.key, "source changed during migration; not deleting"))
+            continue
         try:
             src.delete(m.key)
         except StorageError as e:  # index already points to verified copy; stale source copy is harmless
