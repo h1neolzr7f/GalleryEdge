@@ -123,3 +123,49 @@ def test_keys_create_writes_0600_file(tmp_path):
     assert Path(out).stat().st_mode & 0o777 == 0o600
     key = Path(out).read_text().strip()
     assert key.startswith("ge_") and key not in j["message"] and key not in j["result"]
+
+
+
+def test_real_setup_wizard_rejects_rebinding_and_cross_origin(tmp_path, monkeypatch):
+    """Test the actual wizard middleware, not a hand-written duplicate."""
+    import uvicorn
+    from galleryedge_ops import setup as setup_module
+
+    seen = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: seen.append(app))
+    root = tmp_path / "safe-install"
+    applied = []
+    def fake_apply(target, **kwargs):
+        applied.append(str(target))
+        return {"ok": True}
+    monkeypatch.setattr(setup_module, "apply", fake_apply)
+    assert run_setup_wizard(str(root), 8799) == 0
+    app = seen[0]
+    client = TestClient(app)
+    payload = {"root": str(tmp_path / "untrusted-location"), "username": "admin",
+               "password": ADMIN_PW, "vault_passphrase": "FAKE-test-vault"}
+
+    assert client.post("/api/setup/apply", json=payload).status_code == 403
+    assert client.get("/api/setup/defaults", headers={"Host": "rebind.example"}).status_code == 403
+    assert client.post("/api/setup/apply", json=payload,
+                       headers={"X-GE-Panel": "1", "Origin": "http://evil.example"}).status_code == 403
+    assert client.post("/api/setup/apply", json=payload,
+                       headers={"X-GE-Panel": "1"}).status_code == 200
+    assert applied == [str(root.resolve())]
+
+
+def test_abandoned_running_job_is_marked_interrupted(tmp_path):
+    conn = db.connect(str(tmp_path / "jobs.db"))
+    db.migrate(conn)
+    jobs.migrate(conn)
+    jid = jobs.enqueue(conn, "crawl", "admin", {"adapter": "synthetic"})
+    conn.execute("UPDATE jobs SET status='running' WHERE id=?", (jid,))
+    conn.commit()
+    runner = jobs.JobRunner(conn, {"panel": {"state_dir": str(tmp_path)}})
+    runner.start()
+    try:
+        job = jobs.get_job(conn, jid)
+        assert job["status"] == "error"
+        assert "中断" in job["message"]
+    finally:
+        runner.stop()

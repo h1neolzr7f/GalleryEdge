@@ -43,17 +43,15 @@ function render(){
   title.textContent=S[i].t; sub.textContent=S[i].s; err.textContent=''; ok.textContent='';
   const id=S[i].id;
   if(id==='welcome'){
-    body.innerHTML='<p>数据将保存到：</p><code id=rootShow></code><p class=tip>可在下一步修改。安装后请用浏览器打开面板登录。</p>';
+    body.innerHTML='<p>数据将保存到：</p><code id=rootShow></code><p class=tip>要修改数据目录，请启动时使用 --setup-dir。安装后打开面板登录。</p>';
     document.getElementById('rootShow').textContent=d.root; btn.textContent='开始';
   } else if(id==='admin'){
     body.innerHTML='<label>用户名<input name=username autocomplete=username></label>'+
       '<label>密码<input name=password type=password autocomplete=new-password></label>'+
-      '<label>端口<input name=port type=number></label>'+
-      '<label>数据目录<input name=root></label>';
+      '<label>端口<input name=port type=number></label>';
     body.querySelector('[name=username]').value=d.username;
     body.querySelector('[name=password]').value=d.password;
     body.querySelector('[name=port]').value=d.port;
-    body.querySelector('[name=root]').value=d.root;
     btn.textContent='下一步';
   } else if(id==='vault'){
     body.innerHTML='<label>保险库口令（至少 12 位）<input name=vault_passphrase type=password></label>'+
