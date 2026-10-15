@@ -43,12 +43,21 @@ def apply(root: str | Path, *, username: str, password: str, vault_passphrase: s
           port: int = 8790, turso_token_file: str | None = None, turso_url: str | None = None) -> dict:
     """Create a ready-to-run GalleryEdge tree. Returns paths (never secrets)."""
     root = Path(root).resolve()
+    # Reject invalid setup input before creating any persistent directories,
+    # configuration files or credential material.
+    if not auth.USER_RE.fullmatch(username or ""):
+        raise SetupError("username: 3-32 chars, lowercase letters, digits, _ . -")
+    auth.check_password_policy(password, username)
+    if not isinstance(vault_passphrase, str) or len(vault_passphrase) < 12:
+        raise SetupError("vault passphrase must be at least 12 characters")
+    try:
+        port = int(port)
+    except (ValueError, TypeError):
+        raise SetupError("port must be between 1 and 65535") from None
+    if not 1 <= port <= 65535:
+        raise SetupError("port must be between 1 and 65535")
     if (root / "config.json").exists() and auth.user_count(db.connect(f"file:{(root / 'var' / 'panel.db')}")) > 0:
         raise SetupError("already set up (config.json + admin exist); open the panel instead")
-    root.mkdir(parents=True, exist_ok=True)
-    for d in ("var", "var/hot", "var/cold", "var/packs", "var/crawl", "var/backups", "var/jobs"):
-        (root / d).mkdir(parents=True, exist_ok=True)
-
     cfg = json.loads(json.dumps(DEFAULT_CFG))
     cfg["panel"]["port"] = int(port)
     cfg["panel"]["state_dir"] = _abs(root, "var")
@@ -75,6 +84,9 @@ def apply(root: str | Path, *, username: str, password: str, vault_passphrase: s
         cfg["database"]["index_token_file"] = str(tf)
 
     cfg = config.validate(cfg)
+    root.mkdir(parents=True, exist_ok=True)
+    for d in ("var", "var/hot", "var/cold", "var/packs", "var/crawl", "var/backups", "var/jobs"):
+        (root / d).mkdir(parents=True, exist_ok=True)
     (root / "config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     # vault passphrase → 0600 env hint file (user can also export GE_VAULT_PASSPHRASE)
@@ -83,9 +95,9 @@ def apply(root: str | Path, *, username: str, password: str, vault_passphrase: s
         fd = os.open(vp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(vault_passphrase + "\n")
-    os.environ["GE_VAULT_PASSPHRASE"] = vault_passphrase
     vault = Vault(cfg["vault"]["path"], vault_passphrase)
     vault.set("setup-marker", "ok")
+    os.environ["GE_VAULT_PASSPHRASE"] = vault_passphrase
 
     conn = db.connect(cfg["database"]["primary"])
     db.migrate(conn)

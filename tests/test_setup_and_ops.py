@@ -123,3 +123,28 @@ def test_keys_create_writes_0600_file(tmp_path):
     assert Path(out).stat().st_mode & 0o777 == 0o600
     key = Path(out).read_text().strip()
     assert key.startswith("ge_") and key not in j["message"] and key not in j["result"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"username": "x"}, {"password": "too-short"},
+    {"vault_passphrase": "too-short"}, {"port": 0}, {"port": 70000}
+])
+def test_setup_fails_validation_without_partial_files(tmp_path, bad):
+    root = tmp_path / "bad-install"
+    kw = {"username": "owner", "password": "FAKE-Strong-Password-8899",
+          "vault_passphrase": "FAKE-Vault-Phrase-1234", "port": 8790}
+    kw.update(bad)
+    with pytest.raises((setup.SetupError, auth.AuthError)):
+        setup.apply(root, **kw)
+    assert not root.exists(), "failed preflight must not leave behind config/secret material"
+
+
+def test_setup_invalid_token_file_fails_before_creating_tree(tmp_path):
+    root = tmp_path / "bad-token-install"
+    token = tmp_path / "invalid-token.txt"
+    token.write_text("unsafe")
+    token.chmod(0o644)
+    with pytest.raises(setup.SetupError, match="0600"):
+        setup.apply(root, username="owner", password="FAKE-Strong-Password-8899",
+                    vault_passphrase="FAKE-Vault-Phrase-1234", turso_token_file=str(token))
+    assert not root.exists()
